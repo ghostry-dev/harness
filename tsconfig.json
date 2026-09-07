@@ -3,6 +3,7 @@
   "compilerOptions": {
     "rootDir": ".",
     "target": "ES2019",
+    "lib": ["ES2019", "ES2021.Promise"],
     "module": "ESNext",
     "moduleDetection": "force",
     "allowJs": false,

@@ -3,8 +3,9 @@ import {
   TestingError,
   type Identity,
   type Integration,
+  type Outcome,
 } from "@ghostry/testing";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { invoke, recordingFramework, testsOf } from "./fixtures/framework";
 
 function tracing(
@@ -607,4 +608,513 @@ test("extra arguments after the body are forwarded to the runner", () => {
   it("timed", () => {}, 1_000);
 
   expect(testsOf(framework)[0]!.rest).toEqual([1_000]);
+});
+
+function settingUp(
+  name: string,
+  log: string[],
+  cleanup?: (outcome: Outcome) => void | PromiseLike<void>,
+): Integration<{}> {
+  return {
+    name,
+    provides: {},
+    setup() {
+      log.push(`${name}:setup`);
+      return (
+        cleanup
+        ?? (() => {
+          log.push(`${name}:cleanup`);
+        })
+      );
+    },
+  };
+}
+
+test("cleanups run inner-first across integrations", () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [
+      settingUp("outer", log),
+      settingUp("mid", log),
+      settingUp("inner", log),
+    ],
+  });
+
+  it("leaf", () => {
+    log.push("body");
+  });
+
+  invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual([
+    "outer:setup",
+    "mid:setup",
+    "inner:setup",
+    "body",
+    "inner:cleanup",
+    "mid:cleanup",
+    "outer:cleanup",
+  ]);
+});
+
+test("cleanup receives `{ ok: true }` on pass and `{ ok: false, error }` on failure", () => {
+  const passed: Outcome[] = [];
+  const failed: Outcome[] = [];
+  const boom = new Error("boom");
+  const framework = recordingFramework();
+  const observe: Integration<{}> = {
+    name: "observe",
+    provides: {},
+    setup: () => (outcome) => {
+      (outcome.ok ? passed : failed).push(outcome);
+    },
+  };
+  const { it } = initialize({ framework, integrations: [observe] });
+
+  it("pass", () => {});
+  it("fail", () => {
+    throw boom;
+  });
+
+  invoke(testsOf(framework)[0]!);
+  try {
+    invoke(testsOf(framework)[1]!);
+    throw new Error("expected the failing body to throw");
+  } catch (error) {
+    expect(error).toBe(boom);
+  }
+
+  expect(passed).toEqual([{ ok: true }]);
+  expect(failed).toEqual([{ ok: false, error: boom }]);
+});
+
+test("a synchronous body with synchronous cleanup stays synchronous", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [settingUp("probe", [])],
+  });
+
+  it("leaf", () => 7);
+
+  const result = invoke(testsOf(framework)[0]!);
+  expect(result).not.toBeInstanceOf(Promise);
+  expect(result).toBe(7);
+});
+
+test("a synchronous body with async cleanup is promoted to a promise", async () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [
+      settingUp("outer", log, async () => {
+        log.push("outer:cleanup:start");
+        await Promise.resolve();
+        log.push("outer:cleanup:end");
+      }),
+      settingUp("inner", log, async () => {
+        log.push("inner:cleanup:start");
+        await Promise.resolve();
+        log.push("inner:cleanup:end");
+      }),
+    ],
+  });
+
+  it("leaf", () => {
+    log.push("body");
+    return 7;
+  });
+
+  const result = invoke(testsOf(framework)[0]!);
+  expect(result).toBeInstanceOf(Promise);
+  expect(await result).toBe(7);
+  expect(log).toEqual([
+    "outer:setup",
+    "inner:setup",
+    "body",
+    "inner:cleanup:start",
+    "inner:cleanup:end",
+    "outer:cleanup:start",
+    "outer:cleanup:end",
+  ]);
+});
+
+test("an async setup completes before that integration's providers run", async () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const probe: Integration<{ n: number }> = {
+    name: "probe",
+    provides: {
+      n: () => {
+        log.push("provide");
+        return 1;
+      },
+    },
+    async setup() {
+      log.push("setup:start");
+      await Promise.resolve();
+      log.push("setup:end");
+    },
+  };
+  const { it } = initialize({ framework, integrations: [probe] });
+
+  it("leaf", () => {
+    log.push("body");
+  });
+
+  const result = invoke(testsOf(framework)[0]!);
+  expect(result).toBeInstanceOf(Promise);
+  await result;
+  expect(log).toEqual(["setup:start", "setup:end", "provide", "body"]);
+});
+
+/**
+ * An `async` setup registers its cleanup only after the descent has already
+ * returned its promise, so anything reading `cleanups.length` before settlement
+ * sees an empty array. Asserted in both orderings because a synchronous
+ * integration placed outside masks the bug entirely: it registers before the
+ * first await, so the array is non-empty at the moment the descent returns and
+ * the cleanup chain gets attached after all.
+ */
+function asyncSettingUp(name: string, log: string[]): Integration<{}> {
+  return {
+    name,
+    provides: {},
+    async setup() {
+      await Promise.resolve();
+      log.push(`${name}:setup`);
+      return () => {
+        log.push(`${name}:cleanup`);
+      };
+    },
+  };
+}
+
+test("an async setup's cleanup runs when it is the outermost integration", async () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [asyncSettingUp("async-outer", log), settingUp("sync", log)],
+  });
+
+  it("leaf", () => {
+    log.push("body");
+  });
+
+  await invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual([
+    "async-outer:setup",
+    "sync:setup",
+    "body",
+    "sync:cleanup",
+    "async-outer:cleanup",
+  ]);
+});
+
+test("an async setup's cleanup runs when a synchronous integration wraps it", async () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [settingUp("sync", log), asyncSettingUp("async-inner", log)],
+  });
+
+  it("leaf", () => {
+    log.push("body");
+  });
+
+  await invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual([
+    "sync:setup",
+    "async-inner:setup",
+    "body",
+    "async-inner:cleanup",
+    "sync:cleanup",
+  ]);
+});
+
+test("an async setup's cleanup still runs when the body throws", async () => {
+  const log: string[] = [];
+  const failure = new Error("body failed");
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [asyncSettingUp("async-outer", log)],
+  });
+
+  it("leaf", () => {
+    throw failure;
+  });
+
+  await expect(invoke(testsOf(framework)[0]!)).rejects.toThrow(failure);
+
+  expect(log).toEqual(["async-outer:setup", "async-outer:cleanup"]);
+});
+
+test("a throwing cleanup does not prevent its siblings from running", () => {
+  const log: string[] = [];
+  const innerError = new Error("inner cleanup");
+  const outerError = new Error("outer cleanup");
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [
+      settingUp("outer", log, () => {
+        log.push("outer:cleanup");
+        throw outerError;
+      }),
+      settingUp("mid", log, () => {
+        log.push("mid:cleanup");
+      }),
+      settingUp("inner", log, () => {
+        log.push("inner:cleanup");
+        throw innerError;
+      }),
+    ],
+  });
+
+  it("leaf", () => {
+    log.push("body");
+  });
+
+  const error = spyOn(console, "error");
+  error.mockImplementation(() => {});
+  try {
+    invoke(testsOf(framework)[0]!);
+    throw new Error("expected AggregateError");
+  } catch (thrown) {
+    expect(thrown).toBeInstanceOf(AggregateError);
+    if (thrown instanceof AggregateError) {
+      expect(thrown.errors).toEqual([innerError, outerError]);
+    }
+  } finally {
+    error.mockRestore();
+  }
+
+  expect(log).toEqual([
+    "outer:setup",
+    "mid:setup",
+    "inner:setup",
+    "body",
+    "inner:cleanup",
+    "mid:cleanup",
+    "outer:cleanup",
+  ]);
+});
+
+test("cleanup errors are collected into an AggregateError, logged, and thrown only when the test passed", () => {
+  const cleanupError = new Error("cleanup failed");
+  const probe: Integration<{}> = {
+    name: "probe",
+    provides: {},
+    setup: () => () => {
+      throw cleanupError;
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [probe] });
+
+  it("leaf", () => 7);
+
+  const error = spyOn(console, "error");
+  error.mockImplementation(() => {});
+  try {
+    invoke(testsOf(framework)[0]!);
+    throw new Error("expected AggregateError");
+  } catch (thrown) {
+    expect(thrown).toBeInstanceOf(AggregateError);
+    if (thrown instanceof AggregateError) {
+      expect(thrown.errors).toEqual([cleanupError]);
+    }
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]![0]).toBe(thrown);
+  } finally {
+    error.mockRestore();
+  }
+});
+
+test("a failing test's error propagates unmodified even when cleanup also throws", () => {
+  const boom = new Error("body failed");
+  const cleanupError = new Error("cleanup failed");
+  const probe: Integration<{}> = {
+    name: "probe",
+    provides: {},
+    setup: () => () => {
+      throw cleanupError;
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [probe] });
+
+  it("leaf", () => {
+    throw boom;
+  });
+
+  const error = spyOn(console, "error");
+  error.mockImplementation(() => {});
+  try {
+    invoke(testsOf(framework)[0]!);
+    throw new Error("expected the body error");
+  } catch (thrown) {
+    expect(thrown).toBe(boom);
+    expect(error).toHaveBeenCalledTimes(1);
+    const logged = error.mock.calls[0]![0];
+    expect(logged).toBeInstanceOf(AggregateError);
+    if (logged instanceof AggregateError) {
+      expect(logged.errors).toEqual([cleanupError]);
+    }
+  } finally {
+    error.mockRestore();
+  }
+});
+
+test("setup runs inside its own around frame, before that integration's providers", () => {
+  const log: string[] = [];
+  const probe: Integration<{ n: number }> = {
+    name: "probe",
+    provides: {
+      n: () => {
+        log.push("provide");
+        return 1;
+      },
+    },
+    setup() {
+      log.push("setup");
+      return () => {
+        log.push("cleanup");
+      };
+    },
+    around(_identity, body) {
+      log.push("around:enter");
+      const result = body();
+      log.push("around:leave");
+      return result;
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [probe] });
+
+  it("leaf", () => {
+    log.push("body");
+  });
+
+  invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual([
+    "around:enter",
+    "setup",
+    "provide",
+    "body",
+    "around:leave",
+    "cleanup",
+  ]);
+});
+
+/**
+ * Bare chaining — `return Promise.resolve(body()).then(...)` with no thenable
+ * guard — promotes a synchronous body. An outer `around` whose `finally` runs
+ * at the call boundary then tears down _before_ the inner frame's deferred
+ * close, inverting order.
+ */
+test("a bare `around` that always chains inverts teardown order for wrapping integrations", async () => {
+  const log: string[] = [];
+  const outer: Integration<{}> = {
+    name: "outer",
+    provides: {},
+    around(_identity, body) {
+      log.push("outer:enter");
+      try {
+        return body();
+      } finally {
+        log.push("outer:leave");
+      }
+    },
+  };
+  const inner: Integration<{}> = {
+    name: "inner",
+    provides: {},
+    around<_Return>(_identity: Identity, body: () => _Return): _Return {
+      log.push("inner:enter");
+      return Promise.resolve(body()).then((value) => {
+        log.push("inner:leave");
+        return value;
+      }) as _Return;
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [outer, inner] });
+
+  it("leaf", () => {
+    log.push("body");
+  });
+
+  const result = invoke(testsOf(framework)[0]!);
+  expect(result).toBeInstanceOf(Promise);
+  await result;
+  expect(log).toEqual([
+    "outer:enter",
+    "inner:enter",
+    "body",
+    "outer:leave",
+    "inner:leave",
+  ]);
+});
+
+test("a guarded `around` keeps teardown inner-first for wrapping integrations", () => {
+  const log: string[] = [];
+  const outer: Integration<{}> = {
+    name: "outer",
+    provides: {},
+    around(_identity, body) {
+      log.push("outer:enter");
+      try {
+        return body();
+      } finally {
+        log.push("outer:leave");
+      }
+    },
+  };
+  const inner: Integration<{}> = {
+    name: "inner",
+    provides: {},
+    around<_Return>(_identity: Identity, body: () => _Return): _Return {
+      log.push("inner:enter");
+      const result = body();
+      if (
+        typeof result !== "object"
+        || result === null
+        || typeof (result as unknown as PromiseLike<unknown>).then
+          !== "function"
+      ) {
+        log.push("inner:leave");
+        return result;
+      }
+      return (result as unknown as PromiseLike<unknown>).then((value) => {
+        log.push("inner:leave");
+        return value;
+      }) as _Return;
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [outer, inner] });
+
+  it("leaf", () => {
+    log.push("body");
+  });
+
+  const result = invoke(testsOf(framework)[0]!);
+  expect(result).not.toBeInstanceOf(Promise);
+  expect(log).toEqual([
+    "outer:enter",
+    "inner:enter",
+    "body",
+    "inner:leave",
+    "outer:leave",
+  ]);
 });

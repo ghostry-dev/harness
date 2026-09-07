@@ -51,21 +51,47 @@ export type Provides<$Context extends object> = {
 };
 
 /**
+ * Whether the test body settled successfully. Handed to each `setup` cleanup so
+ * teardown can observe pass/fail the way a correctly-written `around` would
+ * have — without the thenable-guard that writing `around` requires.
+ */
+export type Outcome =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: unknown };
+
+/**
+ * Teardown returned by `setup`. May be async; a thenable is awaited before the
+ * next cleanup (inner-first) and before the test completes.
+ */
+export type Cleanup = (outcome: Outcome) => void | PromiseLike<void>;
+
+/**
  * What `initialize` invokes per test or hook. `provides` is the _only_ source
  * of context keys — there is no parallel declaration that could name a key it
  * does not actually produce, which is what let a mismatched `keys` array go
  * unnoticed under the previous `{ keys, run }` shape.
  *
- * `around` wraps the body and contributes nothing to the context: it is for
- * setup/teardown that does not produce a value (opening a transaction,
- * installing fake timers), and is generic in its return, which it must return
- * unchanged — that is what makes async work and what lets frames nest. Each
- * provider in `provides` runs _inside_ the integration's own `around` frame, so
- * a value can depend on state that frame already established.
+ * `setup` is the common teardown hook: it runs inside this integration's
+ * `around` frame (if any) and before its providers, and the cleanup it returns
+ * runs on test settlement, inner-first across integrations. Both `setup` and
+ * the cleanup may be async; awaiting either promotes the test to a promise.
+ *
+ * `around` wraps the body and contributes nothing to the context. Its `finally`
+ * runs at the _call_ boundary, which for an async body is when the promise is
+ * returned, not when the test finishes — teardown that must pair with
+ * completion belongs in `setup`. `around` is generic in its return, which it
+ * must return unchanged; returning a promise for a synchronous body defers that
+ * frame's teardown to a microtask and inverts order for any integration
+ * wrapping this one.
+ *
+ * Each provider in `provides` runs _inside_ the integration's own `around`
+ * frame and after its `setup`, so a value can depend on state that either just
+ * established.
  */
 export type Integration<$Context extends object> = {
   readonly name: string;
   readonly provides: Provides<$Context>;
+  setup?(identity: Identity): Cleanup | void | PromiseLike<Cleanup | void>;
   around?<$Return>(identity: Identity, body: () => $Return): $Return;
 };
 

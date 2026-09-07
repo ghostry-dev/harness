@@ -1,5 +1,11 @@
 import * as bun from "bun:test";
-import { initialize, type Identity, type Integration } from "@ghostry/testing";
+import {
+  initialize,
+  type Cleanup,
+  type Identity,
+  type Integration,
+  type Outcome,
+} from "@ghostry/testing";
 import { recordingFramework } from "./fixtures/framework";
 
 /**
@@ -15,6 +21,7 @@ type Expect<_ extends true> = true;
 const left: Integration<{ left: number }> = {
   name: "left",
   provides: { left: () => 1 },
+  setup: () => () => {},
 };
 const right: Integration<{ right: string }> = {
   name: "right",
@@ -48,6 +55,13 @@ export type Assertions = [
       }
     >
   >,
+  Expect<
+    Equal<
+      Outcome,
+      { readonly ok: true } | { readonly ok: false; readonly error: unknown }
+    >
+  >,
+  Expect<Equal<Cleanup, (outcome: Outcome) => void | PromiseLike<void>>>,
   /**
    * Two integrations merge by intersection into the body's first parameter.
    */

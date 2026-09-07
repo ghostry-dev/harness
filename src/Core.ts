@@ -267,10 +267,10 @@ function testable(
 }
 
 /**
- * Wrap a test-framework module so every `it`/`test` body runs inside each
- * integration's `around` (its `provides` merged into the context regardless),
- * with an `Identity` derived from the registration-time suite the test was
- * declared in — never from a stack walk.
+ * Wrap a test-framework module so every `it`/`test` body runs inside `compose`
+ * — each integration's `setup`/`around`, its `provides` merged into the context
+ * — with an `Identity` derived from the registration-time suite the test was
+ * declared in, never from a stack walk.
  *
  * The framework is a parameter, never an import: this package has zero runtime
  * dependencies, and bun:test / vitest / a recording stand-in are

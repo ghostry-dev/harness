@@ -69,6 +69,80 @@ describe("fast", async ({ it }) => {
 
 it("top level", at());
 
+/**
+ * Cleanup ordering against bun's deferred nested-`describe` collection — the
+ * stand-in can imitate the registration order, not the runner actually awaiting
+ * settlement of a real test.
+ */
+const cleanupLog: string[] = [];
+
+function sequenced(name: string): Integration<{}> {
+  return {
+    name,
+    provides: {},
+    setup() {
+      cleanupLog.push(`${name}:setup`);
+      return () => {
+        cleanupLog.push(`${name}:cleanup`);
+      };
+    },
+  };
+}
+
+const { describe: describeCleanup, it: itCleanup } = initialize({
+  framework,
+  integrations: [sequenced("outer"), sequenced("inner")],
+});
+
+describeCleanup("cleanup-order", () => {
+  describeCleanup("inner-suite", () => {
+    itCleanup("leaf", () => {
+      cleanupLog.push("body");
+    });
+  });
+});
+
+/**
+ * A genuinely failing async test, registered through bun's `it.failing` so the
+ * suite still passes. If compose swallowed the rejection, `.failing` would
+ * invert and fail this run; `afterAll` then confirms cleanup ran.
+ */
+let asyncFailCleaned = false;
+
+const cleanupOnFail: Integration<{}> = {
+  name: "cleanup-on-fail",
+  provides: {},
+  setup() {
+    return () => {
+      asyncFailCleaned = true;
+    };
+  },
+};
+
+const { it: failingIt } = initialize({
+  framework: {
+    describe: framework.describe,
+    /**
+     * bun throws on even reading `.skip`/`.only` off `it.failing`, so the
+     * wrapper cannot be the modifier itself — `testable` probes those.
+     */
+    it: ((...args: never[]) =>
+      (framework.it.failing as (...args: never[]) => unknown)(
+        ...args,
+      )) as typeof framework.it,
+    expect: framework.expect,
+  },
+  integrations: [cleanupOnFail],
+});
+
+failingIt(
+  "a genuinely failing async test still reports as failed and runs its cleanup",
+  async () => {
+    await Promise.resolve();
+    throw new Error("conformance: expected async failure");
+  },
+);
+
 afterAll(() => {
   expect(seen.map((path) => path.join("/")).sort()).toEqual([
     "",
@@ -81,4 +155,12 @@ afterAll(() => {
     "slow",
     "slow/under slow",
   ]);
+  expect(cleanupLog).toEqual([
+    "outer:setup",
+    "inner:setup",
+    "body",
+    "inner:cleanup",
+    "outer:cleanup",
+  ]);
+  expect(asyncFailCleaned).toBe(true);
 });

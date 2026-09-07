@@ -44,7 +44,53 @@ export const { describe, it, expect } = initializeTesting({
 });
 ```
 
-`@ghostry/testing` depends on neither fabricator nor the runner. Integrations satisfy `{ name, provides, around? }` structurally: `provides` is a map of context key to `(identity) => value` and is the only source of that integration's keys, so there is nothing to declare separately and nothing that could name a key the integration does not actually contribute. `around`, if present, wraps the write for setup/teardown that contributes no value of its own (opening a transaction, installing fake timers) and must return the body's value unchanged.
+`@ghostry/testing` depends on neither fabricator nor the runner. Integrations satisfy `{ name, provides, setup?, around? }` structurally: `provides` is a map of context key to `(identity) => value` and is the only source of that integration's keys, so there is nothing to declare separately and nothing that could name a key the integration does not actually contribute. `setup`, if present, runs inside that integration's frame and returns a cleanup; the library sequences those cleanups inner-first on test settlement, so teardown is not the integration author's thenable-guard to get right. `around`, if present, wraps the write for cases `setup` cannot express and must return the body's value unchanged — its `finally` runs at the call boundary, which for an async body is when the promise is _returned_, not when the test finishes.
+
+A transaction is the whole thing under `setup`:
+
+```ts
+setup() {
+  const tx = openTransaction();
+  current = tx;
+  return () => { current = undefined; tx.rollback(); };
+}
+```
+
+Written correctly under `around`, the same integration needs the guard, both arms, the synchronous-throw branch, a shared close path, and an `as $Return` cast:
+
+```ts
+around<$Return>(_identity: Identity, body: () => $Return): $Return {
+  const tx = openTransaction();
+  current = tx;
+
+  // One close path, so it cannot drift between the three call sites.
+  const close = () => { current = undefined; tx.rollback(); };
+
+  let result: $Return;
+  try {
+    result = body();
+  } catch (error) {
+    // The body threw synchronously and never returned a value.
+    close();
+    throw error;
+  }
+
+  // Guard: a synchronous body must stay synchronous. Promoting it to a
+  // promise would defer cleanup to a microtask and invert teardown order
+  // for any integration wrapping this one.
+  if (!isThenable(result)) {
+    close();
+    return result;
+  }
+
+  // Both arms: cleanup runs whether the test passes or fails, and the
+  // rejection must be re-thrown or the failure is swallowed.
+  return result.then(
+    (value) => { close(); return value; },
+    (error) => { close(); throw error; },
+  ) as $Return;
+}
+```
 
 Each test body receives a single `context` argument — every integration's contribution merged into one object. Identity is the test path (`describe` names → test name), not the file: two tests with the same path draw the same per-test scope even in different files. The path is built from links fixed when `describe` is called, not from a stack unwound as callbacks return, so it does not depend on _when_ a runner invokes a nested callback — jest, mocha and `node:test` invoke one inline, while bun and vitest defer it until the enclosing callback has returned.
 

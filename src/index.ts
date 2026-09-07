@@ -12,11 +12,11 @@
  */
 
 /**
- * Wrap a test-framework module so every `it`/`test` body runs inside each
- * integration's `around`, with its `provides` merged into the context
- * regardless. Returns `{ describe, it, test, expect, framework }` — `it` and
- * `test` are one implementation under two names, `expect` is bound so a
- * destructure does not drop `this`, and `framework` is the unchanged module.
+ * Wrap a test-framework module so every `it`/`test` body runs inside `compose`
+ * — each integration's `setup`/`around`, with its `provides` merged into the
+ * context regardless. Returns `{ describe, it, test, expect, framework }` —
+ * `it` and `test` are one implementation under two names, `expect` is bound so
+ * a destructure does not drop `this`, and `framework` is the unchanged module.
  */
 export { initialize } from "./Core";
 
@@ -30,13 +30,16 @@ export { TestingError } from "./Error";
 
 /**
  * `Identity` is what identifies one registered test or suite; `Integration` is
- * the `{ name, provides, around? }` shape `initialize` invokes — `provides` is
- * a `Provides<$Context>`, one `Provider` per context key; `TestContext` is the
- * merged first parameter of a wrapped body. `Framework`/`Initialized`/
- * `Describable`/`Testable` name the wrapping surface.
+ * the `{ name, provides, setup?, around? }` shape `initialize` invokes —
+ * `provides` is a `Provides<$Context>`, one `Provider` per context key;
+ * `Cleanup` is what `setup` returns and `Outcome` is what that cleanup
+ * receives; `TestContext` is the merged first parameter of a wrapped body.
+ * `Framework`/`Initialized`/`Describable`/`Testable` name the wrapping
+ * surface.
  */
 export type {
   AnyIntegration,
+  Cleanup,
   Describable,
   DescribeFn,
   DescribeTodoFn,
@@ -45,6 +48,7 @@ export type {
   InitializeOptions,
   Initialized,
   Integration,
+  Outcome,
   Provider,
   Provides,
   TestContext,
