@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@ghostry/testing",
+      "name": "@ghostry/harness",
       "devDependencies": {
         "@rsdoctor/rspack-plugin": "^1.6.2",
         "@rslib/core": "^0.23.2",

@@ -1,4 +1,4 @@
-import type { AnyFn } from "@ghostry/testing";
+import type { AnyFn } from "@ghostry/harness";
 
 /**
  * A recorded `describe` or `it` call. `fn` is the function the wrapper handed

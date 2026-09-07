@@ -5,7 +5,7 @@ import {
   type Identity,
   type Integration,
   type Outcome,
-} from "@ghostry/testing";
+} from "@ghostry/harness";
 import { recordingFramework } from "./fixtures/framework";
 
 /**

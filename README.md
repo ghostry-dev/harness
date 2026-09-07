@@ -1,14 +1,14 @@
 <div align="center">
 
-# @ghostry/testing
+# @ghostry/harness
 
 **A wrapper for integrations over a Jest-compatible test framework.**
 
 The same API across every Ghostry library. The framework is a parameter, never an import — this package has zero runtime dependencies.
 
-[![npm](https://img.shields.io/badge/npm-ffffff.svg?style=for-the-badge&color=000000&logo=npm&logoColor=CB3837)](https://www.npmjs.com/package/@ghostry/testing)
-[![jsr](https://img.shields.io/badge/jsr-ffffff?style=for-the-badge&color=000000&logo=jsr&logoColor=F7DF1E)](https://jsr.io/@ghostry/testing)
-[![github](https://img.shields.io/badge/github-ffffff?style=for-the-badge&color=000000&logo=github&logoColor=ffffff)](https://github.com/ghostry-dev/testing)
+[![npm](https://img.shields.io/badge/npm-ffffff.svg?style=for-the-badge&color=000000&logo=npm&logoColor=CB3837)](https://www.npmjs.com/package/@ghostry/harness)
+[![jsr](https://img.shields.io/badge/jsr-ffffff?style=for-the-badge&color=000000&logo=jsr&logoColor=F7DF1E)](https://jsr.io/@ghostry/harness)
+[![github](https://img.shields.io/badge/github-ffffff?style=for-the-badge&color=000000&logo=github&logoColor=ffffff)](https://github.com/ghostry-dev/harness)
 [![typescript](https://img.shields.io/badge/typescript-ffffff?style=for-the-badge&color=000000&logo=typescript&logoColor=3178C6)](#)
 [![bun](https://img.shields.io/badge/bun-ffffff?style=for-the-badge&color=000000&logo=bun&logoColor=FBF0DF)](#)
 [![node](https://img.shields.io/badge/node-ffffff?style=for-the-badge&color=000000&logo=nodedotjs&logoColor=5FA04E)](#)
@@ -18,15 +18,15 @@ The same API across every Ghostry library. The framework is a parameter, never a
 ## Install
 
 ```bash
-npm install @ghostry/testing
+npm install @ghostry/harness
 ```
 
 ## Example
 
 ```ts
 import { initialize as initializeFabricator } from "@ghostry/fabricator";
-import { initialize as initializeTesting } from "@ghostry/testing";
-import { integration as fabricatorIntegration } from "@ghostry/fabricator/testing";
+import { initialize as initializeHarness } from "@ghostry/harness";
+import { integration as fabricatorIntegration } from "@ghostry/fabricator/harnessing";
 import * as framework from "bun:test";
 
 /**
@@ -38,13 +38,13 @@ export const fabricator = initializeFabricator({
   clock: new Date("2024-01-01T00:00:00Z"),
 });
 
-export const { describe, it, expect } = initializeTesting({
+export const { describe, it, expect } = initializeHarness({
   framework,
   integrations: [fabricatorIntegration(fabricator)],
 });
 ```
 
-`@ghostry/testing` depends on neither fabricator nor the runner. Integrations satisfy `{ name, provides, setup?, around? }` structurally: `provides` is a map of context key to `(identity) => value` and is the only source of that integration's keys, so there is nothing to declare separately and nothing that could name a key the integration does not actually contribute. `setup`, if present, runs inside that integration's frame and returns a cleanup; the library sequences those cleanups inner-first on test settlement, so teardown is not the integration author's thenable-guard to get right. `around`, if present, wraps the write for cases `setup` cannot express and must return the body's value unchanged — its `finally` runs at the call boundary, which for an async body is when the promise is _returned_, not when the test finishes.
+`@ghostry/harness` depends on neither fabricator nor the runner. Integrations satisfy `{ name, provides, setup?, around? }` structurally: `provides` is a map of context key to `(identity) => value` and is the only source of that integration's keys, so there is nothing to declare separately and nothing that could name a key the integration does not actually contribute. `setup`, if present, runs inside that integration's frame and returns a cleanup; the library sequences those cleanups inner-first on test settlement, so teardown is not the integration author's thenable-guard to get right. `around`, if present, wraps the write for cases `setup` cannot express and must return the body's value unchanged — its `finally` runs at the call boundary, which for an async body is when the promise is _returned_, not when the test finishes.
 
 A transaction is the whole thing under `setup`:
 

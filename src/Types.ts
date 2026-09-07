@@ -4,7 +4,7 @@ import type { AnyFn, UnionToIntersection } from "./Utility/Types";
  * What identifies one registered test or suite — the material an integration
  * derives a salt (or any other per-test scope) from.
  *
- * Declared here as the contract `@ghostry/fabricator/testing` (and any other
+ * Declared here as the contract `@ghostry/fabricator/harnessing` (and any other
  * integration) satisfies structurally, so this package depends on none of
  * them.
  *

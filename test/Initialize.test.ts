@@ -1,10 +1,10 @@
 import {
   initialize,
-  TestingError,
+  HarnessError,
   type Identity,
   type Integration,
   type Outcome,
-} from "@ghostry/testing";
+} from "@ghostry/harness";
 import { expect, spyOn, test } from "bun:test";
 import { invoke, recordingFramework, testsOf } from "./fixtures/framework";
 
@@ -126,8 +126,8 @@ test("initialize throws on a pollution key, eagerly", () => {
       initialize({ framework, integrations: [tracing("probe", [key], [])] });
       throw new Error(`expected PrototypePollutionError for ${key}`);
     } catch (error) {
-      expect(error).toBeInstanceOf(TestingError.PrototypePollutionError);
-      if (error instanceof TestingError.PrototypePollutionError) {
+      expect(error).toBeInstanceOf(HarnessError.PrototypePollutionError);
+      if (error instanceof HarnessError.PrototypePollutionError) {
         expect(error.key).toBe(key);
         expect(error.integration).toBe("probe");
       }
@@ -166,7 +166,7 @@ test("a pollution key added directly to `provides` is caught at initialize, not 
   };
 
   expect(() => initialize({ framework, integrations: [probe] })).toThrow(
-    TestingError.PrototypePollutionError,
+    HarnessError.PrototypePollutionError,
   );
   expect(framework.calls).toEqual([]);
 });
@@ -182,7 +182,7 @@ test("initialize throws on a keys collision across integrations, eagerly", () =>
         tracing("third", ["shared"], []),
       ],
     }),
-  ).toThrow(TestingError.IntegrationKeyCollisionError);
+  ).toThrow(HarnessError.IntegrationKeyCollisionError);
 
   try {
     initialize({
@@ -194,8 +194,8 @@ test("initialize throws on a keys collision across integrations, eagerly", () =>
     });
     throw new Error("expected IntegrationKeyCollisionError");
   } catch (error) {
-    expect(error).toBeInstanceOf(TestingError.IntegrationKeyCollisionError);
-    if (error instanceof TestingError.IntegrationKeyCollisionError) {
+    expect(error).toBeInstanceOf(HarnessError.IntegrationKeyCollisionError);
+    if (error instanceof HarnessError.IntegrationKeyCollisionError) {
       expect(error.key).toBe("shared");
       expect(error.first).toBe("first");
       expect(error.second).toBe("second");
@@ -301,8 +301,8 @@ test("an async describe callback throws, and still restores the cursor", () => {
     try {
       describe("inner", async () => {});
     } catch (error) {
-      expect(error).toBeInstanceOf(TestingError.AsyncDescribeError);
-      if (error instanceof TestingError.AsyncDescribeError) {
+      expect(error).toBeInstanceOf(HarnessError.AsyncDescribeError);
+      if (error instanceof HarnessError.AsyncDescribeError) {
         expect(error.suite).toBe("inner");
       }
     }
@@ -478,7 +478,7 @@ test("a thenable return from describe throws the same as async", () => {
   const { describe } = initialize({ framework });
 
   expect(() => describe("suite", () => Promise.resolve())).toThrow(
-    TestingError.AsyncDescribeError,
+    HarnessError.AsyncDescribeError,
   );
 });
 

@@ -1,5 +1,5 @@
 /**
- * The `@ghostry/testing` package export — a wrapping `describe`/`it` whose
+ * The `@ghostry/harness` package export — a wrapping `describe`/`it` whose
  * integrations share one test identity. The framework is a parameter, never an
  * import: this package has zero runtime dependencies, and sameness across
  * Ghostry libraries comes from there being a single implementation rather than
@@ -21,12 +21,12 @@
 export { initialize } from "./Core";
 
 /**
- * `TestingError` is the base; `IntegrationKeyCollisionError` is two
+ * `HarnessError` is the base; `IntegrationKeyCollisionError` is two
  * integrations contributing the same context key; `PrototypePollutionError` is
  * a context key that would reach `Object.prototype`; `AsyncDescribeError` is a
  * `describe` callback that returned a thenable.
  */
-export { TestingError } from "./Error";
+export { HarnessError } from "./Error";
 
 /**
  * `Identity` is what identifies one registered test or suite; `Integration` is

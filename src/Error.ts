@@ -1,6 +1,6 @@
 /**
- * Every error this library throws is a named subclass of {@link TestingError},
- * kept in one dependency-free module: `instanceof TestingError` catches
+ * Every error this library throws is a named subclass of {@link HarnessError},
+ * kept in one dependency-free module: `instanceof HarnessError` catches
  * everything the library raises.
  *
  * Context is `public readonly` constructor parameters, but the message still
@@ -13,20 +13,20 @@
 /**
  * Base error class from which more specific errors inherit.
  */
-export abstract class TestingError extends Error {
+export abstract class HarnessError extends Error {
   constructor() {
     super();
-    this.name = "TestingError";
+    this.name = "HarnessError";
   }
 }
 
-export namespace TestingError {
+export namespace HarnessError {
   /**
    * Thrown eagerly at `initialize()` when two integrations declare the same
    * context key. Not deferred to the first test because a collision is a setup
    * mistake.
    */
-  export class IntegrationKeyCollisionError extends TestingError {
+  export class IntegrationKeyCollisionError extends HarnessError {
     constructor(
       /**
        * The colliding context key.
@@ -55,7 +55,7 @@ export namespace TestingError {
    * actionable — contrast `compose`, which writes a contribution that still
    * carries one with `defineProperty` rather than rejecting it mid-test.
    */
-  export class PrototypePollutionError extends TestingError {
+  export class PrototypePollutionError extends HarnessError {
     constructor(
       /**
        * The offending context key.
@@ -85,7 +85,7 @@ export namespace TestingError {
    * then addressed lexically, which an `await` cannot disturb, and the thenable
    * is handed to the runner to collect however it collects.
    */
-  export class AsyncDescribeError extends TestingError {
+  export class AsyncDescribeError extends HarnessError {
     constructor(
       /**
        * The describe name whose callback returned a thenable.

@@ -1,4 +1,4 @@
-# testing — architecture notes
+# harness — architecture notes
 
 Context for working on this codebase across sessions. Not user-facing — this is how the machine works and where the traps are.
 
@@ -34,7 +34,7 @@ The accepted cost: two tests agreeing on `kind`, `path`, and `name` in different
 
 The callback then runs with the cursor pointed at its own node, and the previous cursor is restored in a `finally` — **before** checking whether the callback returned a thenable, not after. By the time a callback awaits, the runner already has control back, and on `node:test` that means the rest of the module keeps executing; nothing registered in that window may see this suite as current.
 
-That restore is exactly why an `async` callback needs its own address. Declaring a parameter (`fn.length > 0`) hands the callback a `SuiteScope` — its own `describe`/`it`/`test`, closed over a cursor that is never reassigned — so registrations resolve lexically through that binding rather than through the ambient cursor, and don't care that the cursor has moved on. An addressed callback's thenable is handed straight to the runner to collect however it already does (bun and vitest await it; jest rejects an `async` describe outright; mocha silently discards the tests inside one). An _unaddressed_ callback (arity 0) has no such binding, so a thenable from it throws `TestingError.AsyncDescribeError` naming the suite instead of silently registering its tests at a shallower path. A throwing callback still restores the cursor, so later sibling tests see the parent path.
+That restore is exactly why an `async` callback needs its own address. Declaring a parameter (`fn.length > 0`) hands the callback a `SuiteScope` — its own `describe`/`it`/`test`, closed over a cursor that is never reassigned — so registrations resolve lexically through that binding rather than through the ambient cursor, and don't care that the cursor has moved on. An addressed callback's thenable is handed straight to the runner to collect however it already does (bun and vitest await it; jest rejects an `async` describe outright; mocha silently discards the tests inside one). An _unaddressed_ callback (arity 0) has no such binding, so a thenable from it throws `HarnessError.AsyncDescribeError` naming the suite instead of silently registering its tests at a shallower path. A throwing callback still restores the cursor, so later sibling tests see the parent path.
 
 ## Wrapper arity and `this` forwarding
 
@@ -44,9 +44,9 @@ The registered `it` body is always arity 0, regardless of that forwarding: a Jes
 
 ## Package layout
 
-**One package, at the repository root — deliberately not a `pkg/*` monorepo.** The two structures that would justify one are both ruled out by design: integrations live in the libraries they integrate (`@ghostry/fabricator/testing` and the like), since this package depends on none of them and declares the contract structurally; and there are no per-framework adapter packages, because the framework is a parameter, never an import. A conformance kit, if one lands, is a subpath export rather than a sibling package. Re-introducing a workspace later costs about what flattening cost, so nothing is being preserved by keeping the shape "just in case."
+**One package, at the repository root — deliberately not a `pkg/*` monorepo.** The two structures that would justify one are both ruled out by design: integrations live in the libraries they integrate (`@ghostry/fabricator/harnessing` and the like), since this package depends on none of them and declares the contract structurally; and there are no per-framework adapter packages, because the framework is a parameter, never an import. A conformance kit, if one lands, is a subpath export rather than a sibling package. Re-introducing a workspace later costs about what flattening cost, so nothing is being preserved by keeping the shape "just in case."
 
-Tests import via the package specifier `@ghostry/testing`, never a relative `../src/...` path. That resolves by **self-reference** — a package with an `exports` map can import itself by name, no workspace or symlink involved — through `exports` → built `dist/`, so `bun test` always exercises the actual build.
+Tests import via the package specifier `@ghostry/harness`, never a relative `../src/...` path. That resolves by **self-reference** — a package with an `exports` map can import itself by name, no workspace or symlink involved — through `exports` → built `dist/`, so `bun test` always exercises the actual build.
 
 **`check`/`test` deliberately do not build; `verify` does.** `.github/workflows/test.yml` downloads the `dist` artifact built by `build.yml` and then runs `bun run test`, so a build inside `test` would overwrite the exact artifact under test. Locally, `bun run verify` is `build` followed by `test`. Running `bun run test` against a missing or stale `dist/` fails with `Cannot find module` — build first, or use `verify`.
 

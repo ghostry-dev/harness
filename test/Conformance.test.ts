@@ -1,4 +1,4 @@
-import { initialize, type Identity, type Integration } from "@ghostry/testing";
+import { initialize, type Identity, type Integration } from "@ghostry/harness";
 import * as framework from "bun:test";
 import { afterAll, expect } from "bun:test";
 

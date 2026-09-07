@@ -18,7 +18,7 @@ on:
 
 env:
   is-prerelease: ${{ contains(inputs.version, '-') }}
-  filename: testing-${{ inputs.version }}.tgz
+  filename: harness-${{ inputs.version }}.tgz
 
 jobs:
   pack:

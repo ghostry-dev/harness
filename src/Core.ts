@@ -1,5 +1,5 @@
 import { compose } from "./Compose";
-import { TestingError } from "./Error";
+import { HarnessError } from "./Error";
 import type {
   AnyIntegration,
   Describable,
@@ -63,11 +63,11 @@ function assertKeys(integrations: ReadonlyArray<AnyIntegration>): void {
   for (const integration of integrations) {
     for (const key of Object.keys(integration.provides)) {
       if (isPollutionKey(key)) {
-        throw new TestingError.PrototypePollutionError(key, integration.name);
+        throw new HarnessError.PrototypePollutionError(key, integration.name);
       }
       const previous = seen.get(key);
       if (typeof previous === "string") {
-        throw new TestingError.IntegrationKeyCollisionError(
+        throw new HarnessError.IntegrationKeyCollisionError(
           key,
           previous,
           integration.name,
@@ -141,7 +141,7 @@ function wrapDescribe(
         cursor.current = previous;
       }
       if (!isThenable(result)) return;
-      if (!addressed) throw new TestingError.AsyncDescribeError(name);
+      if (!addressed) throw new HarnessError.AsyncDescribeError(name);
       // Hand the thenable back so the runner applies its own collection
       // semantics — bun and vitest await it, jest rejects it, mocha ignores it.
       return result;

@@ -1,5 +1,5 @@
 {
-  "name": "@ghostry/testing",
+  "name": "@ghostry/harness",
   "version": "0.0.1",
   "license": "MIT",
   "description": "A context-aware wrapper for integrations over a Jest-compatible test framework.",
@@ -14,10 +14,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ghostry-dev/testing"
+    "url": "git+https://github.com/ghostry-dev/harness"
   },
-  "homepage": "https://github.com/ghostry-dev/testing",
-  "bugs": "https://github.com/ghostry-dev/testing/issues",
+  "homepage": "https://github.com/ghostry-dev/harness",
+  "bugs": "https://github.com/ghostry-dev/harness/issues",
   "type": "module",
   "sideEffects": false,
   "engines": {
