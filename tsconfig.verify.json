@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["./dist/types/**/*.d.ts"],
+  "compilerOptions": { "skipLibCheck": false }
+}

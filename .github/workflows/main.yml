@@ -1,0 +1,87 @@
+##
+# Changing the version in a commit to main publishes the package under that
+# version.
+#
+name: Build, Test, and Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build.yml
+
+  test:
+    name: Test
+    uses: ./.github/workflows/test.yml
+    needs: [build]
+    permissions:
+      actions: read
+    with:
+      build-run-id: ${{ needs.build.outputs.run-id }}
+
+  get-version:
+    name: Get current version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read-version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Read package version
+        id: read-version
+        run: echo "version=v$(bunx --no-install npm view ./ version)" >> $GITHUB_OUTPUT
+
+  check-release:
+    name: Check for existing release
+    needs: [get-version]
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.release-exists.outputs.result }}
+    steps:
+      - name: Find existing release if it exists
+        id: release-exists
+        uses: actions/github-script@v9
+        with:
+          result-encoding: string
+          script: |
+            return github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: '${{ needs.get-version.outputs.version }}',
+            }).then(() => 'true').catch(() => 'false');
+
+      - name: Release `${{ needs.get-version.outputs.version }}` already exists?
+        run: echo "${{ steps.release-exists.outputs.result }}"
+
+  publish:
+    name: Publish
+    if: ${{ needs.check-release.outputs.exists == 'false' }}
+    uses: ./.github/workflows/publish.yml
+    needs:
+      - build
+      - test
+      - get-version
+      - check-release
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    with:
+      version: ${{ needs.get-version.outputs.version }}
+      build-run-id: ${{ needs.build.outputs.run-id }}
+    secrets:
+      NPM_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}

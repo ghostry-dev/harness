@@ -1,0 +1,181 @@
+name: Publish
+
+on:
+  workflow_call:
+    secrets:
+      NPM_AUTH_TOKEN:
+        required: true
+        description: The NPM authentication token to publish the package.
+    inputs:
+      version:
+        required: true
+        type: string
+        description: The version of the package to publish.
+      build-run-id:
+        required: true
+        type: string
+        description: The run ID of the build workflow that generated the artifacts to publish.
+
+env:
+  is-prerelease: ${{ contains(inputs.version, '-') }}
+  filename: testing-${{ inputs.version }}.tgz
+
+jobs:
+  pack:
+    name: Pack
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download the build
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.build-run-id }}
+          repository: ${{ github.repository }}
+
+      - name: Construct tarball path
+        id: tarball-path
+        run: >
+          echo "path=${{ github.workspace }}/${{ env.filename }}"
+          >> $GITHUB_OUTPUT
+
+      - name: Pack
+        run: bun pm pack --filename ${{ steps.tarball-path.outputs.path }}
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.filename }}
+          path: ${{ steps.tarball-path.outputs.path }}
+          if-no-files-found: error
+
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.tarball-path.outputs.path }}
+
+  release-github:
+    name: Create release on GitHub
+    needs: [pack]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.filename }}
+          path: ${{ github.workspace }}/dist
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ inputs.version }}
+          tag_name: ${{ inputs.version }}
+          target_commitish: ${{ github.ref }}
+          prerelease: ${{ env.is-prerelease }}
+          fail_on_unmatched_files: true
+          files: ${{ github.workspace }}/dist/*.tgz
+
+  ##
+  # https://docs.npmjs.com/generating-provenance-statements#example-github-actions-workflow
+  # https://docs.npmjs.com/trusted-publishers#step-2-configure-your-cicd-workflow
+  #
+  publish-npm:
+    name: Publish to NPM
+    permissions:
+      contents: read
+      id-token: write
+    needs: [pack]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.filename }}
+          path: ${{ github.workspace }}/dist
+          merge-multiple: true
+
+      ##
+      # Until Bun supports publishing with provenance, npm with Node is required.
+      # https://github.com/oven-sh/bun/issues/15601
+      #
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      ##
+      # `NODE_AUTH_TOKEN` is the bootstrap path, not the steady state. A
+      # trusted publisher cannot be configured for a package that does not
+      # exist yet, so a package's very first version has to authenticate
+      # with a token. Provenance is unaffected — it comes from the
+      # `id-token: write` permission above, not from how npm authenticates.
+      #
+      # Once this package has published once and has its trusted publisher
+      # configured, delete this `env:` block and the `NPM_AUTH_TOKEN` secret;
+      # the `.npmrc` that `setup-node` wrote will simply hold an empty token
+      # and npm falls back to OIDC.
+      #
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
+        run: >
+          bunx --no-install npm publish
+          ${{ github.workspace }}/dist/${{ env.filename }}
+          --tag ${{ env.is-prerelease == 'true' && 'experimental' || 'latest' }}
+          --provenance
+
+  publish-jsr:
+    name: Publish to JSR
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Publish
+        run: bunx --no-install jsr publish

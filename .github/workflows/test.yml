@@ -1,0 +1,39 @@
+name: Test
+
+on:
+  workflow_call:
+    inputs:
+      build-run-id:
+        required: true
+        type: string
+        description: The run ID of the build workflow that generated the artifacts to test.
+
+jobs:
+  test:
+    name: Test
+    permissions:
+      actions: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download the build
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.build-run-id }}
+          repository: ${{ github.repository }}
+
+      - name: Test
+        run: bun run test

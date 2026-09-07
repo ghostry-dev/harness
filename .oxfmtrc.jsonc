@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "experimentalOperatorPosition": "start",
+  "quoteProps": "as-needed",
+  "objectWrap": "collapse",
+  "singleQuote": false,
+  "printWidth": 80,
+  "sortPackageJson": false,
+  "ignorePatterns": ["**/bun.lock"],
+  "jsdoc": { "capitalizeDescriptions": false, "commentLineStrategy": "keep" },
+}
