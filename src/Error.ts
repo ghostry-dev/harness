@@ -76,6 +76,89 @@ export namespace HarnessError {
   }
 
   /**
+   * Thrown eagerly at `initialize()` when an integration declares a context key
+   * this library writes itself. Only `"row"` qualifies today: `.each` assigns
+   * the row onto every expanded test's context, so an integration contributing
+   * it would win outside a `.each` test and lose inside one — the same key
+   * meaning two different things depending on how the test was registered.
+   */
+  export class ReservedContextKeyError extends HarnessError {
+    constructor(
+      /**
+       * The reserved context key.
+       */
+      public readonly key: string,
+      /**
+       * The integration that declared `key`.
+       */
+      public readonly integration: string,
+    ) {
+      super();
+      this.name = "ReservedContextKeyError";
+      this.message =
+        `initialize({ integrations }) received "${integration}" contributing `
+        + `"${key}". That key is written by \`.each\` onto every expanded `
+        + `test's context, so an integration cannot also contribute it.`;
+    }
+  }
+
+  /**
+   * Thrown at `.each(table)` when the table cannot produce rows, or produces a
+   * partial one. Not deferred and not tolerated: a table that yields no rows
+   * registers no tests, and a suite that ran nothing still reports green.
+   */
+  export class EachTableError extends HarnessError {
+    constructor(
+      /**
+       * Why the table was rejected. `"shape"` is neither an array nor a tagged
+       * template, `"empty"` produces no rows, `"incomplete"` leaves a trailing
+       * row short of its headings.
+       */
+      public readonly reason: "shape" | "empty" | "incomplete",
+      /**
+       * What was received, as it appears in the message.
+       */
+      public readonly detail: string,
+    ) {
+      super();
+      this.name = "EachTableError";
+      this.message =
+        reason === "incomplete"
+          ? `.each received an incomplete table: ${detail}. Supply one value `
+            + `per heading in every row.`
+          : `.each received an unusable table: ${detail}. It would register no `
+            + `tests at all, so the suite would report green without running `
+            + `them.`;
+    }
+  }
+
+  /**
+   * Thrown when `.skipIf`/`.todoIf`/`.failingIf` is asked to gate a test and
+   * the wrapped framework exposes no modifier that can. Returning the
+   * unmodified surface would run a test the caller explicitly gated off, which
+   * is the one outcome the call cannot mean.
+   */
+  export class ModifierUnsupportedError extends HarnessError {
+    constructor(
+      /**
+       * The `*If` modifier that was called.
+       */
+      public readonly modifier: string,
+      /**
+       * The framework modifiers that would have satisfied it, best first.
+       */
+      public readonly wanted: ReadonlyArray<string>,
+    ) {
+      super();
+      this.name = "ModifierUnsupportedError";
+      this.message =
+        `it.${modifier}(true) cannot gate this test: the framework's it `
+        + `exposes none of ${wanted.map((name) => `"${name}"`).join(", ")}. `
+        + `Running the test unmodified would ignore the gate.`;
+    }
+  }
+
+  /**
    * A `describe` callback that declares no parameter returned a thenable. Such
    * a callback registers through the ambient `it`, which resolves the enclosing
    * suite from a single mutable slot; an `await` hands control back before its

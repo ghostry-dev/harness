@@ -8,7 +8,13 @@ import type { AnyFn } from "@ghostry/harness";
  */
 export type RecordedCall = {
   readonly kind: "describe" | "it";
-  readonly modifier: "only" | "skip" | "todo" | undefined;
+  readonly modifier:
+    | "only"
+    | "skip"
+    | "todo"
+    | "failing"
+    | "concurrent"
+    | undefined;
   readonly name: string;
   readonly fn: (() => unknown) | undefined;
   readonly rest: ReadonlyArray<unknown>;
@@ -41,6 +47,8 @@ export type RecordingFramework = {
     readonly only: AnyFn;
     readonly skip: AnyFn;
     readonly todo: AnyFn;
+    readonly failing: AnyFn;
+    readonly concurrent: AnyFn;
   };
   readonly test: RecordingFramework["it"];
   readonly expect: (
@@ -146,6 +154,8 @@ export function recordingFramework(
   (it as { only: AnyFn }).only = makeIt(calls, "only");
   (it as { skip: AnyFn }).skip = makeIt(calls, "skip");
   (it as { todo: AnyFn }).todo = makeIt(calls, "todo");
+  (it as { failing: AnyFn }).failing = makeIt(calls, "failing");
+  (it as { concurrent: AnyFn }).concurrent = makeIt(calls, "concurrent");
 
   function expect(this: unknown, ...args: unknown[]) {
     return { thisValue: this, args };

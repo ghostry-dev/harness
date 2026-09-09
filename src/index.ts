@@ -29,21 +29,16 @@ export { initialize } from "./Core";
 export { HarnessError } from "./Error";
 
 /**
- * `Identity` is what identifies one registered test or suite; `Integration` is
- * the `{ name, provides, setup?, around? }` shape `initialize` invokes —
- * `provides` is a `Provides<$Context>`, one `Provider` per context key;
- * `Cleanup` is what `setup` returns and `Outcome` is what that cleanup
+ * The integration contract, and the two types that join it to the framework
+ * side. `Identity` is what identifies one registered test or suite;
+ * `Integration` is the `{ name, provides, setup?, around? }` shape `initialize`
+ * invokes — `provides` is a `Provides<$Context>`, one `Provider` per context
+ * key; `Cleanup` is what `setup` returns and `Outcome` is what that cleanup
  * receives; `TestContext` is the merged first parameter of a wrapped body.
- * `Framework`/`Initialized`/`Describable`/`Testable` name the wrapping
- * surface.
  */
 export type {
   AnyIntegration,
   Cleanup,
-  Describable,
-  DescribeFn,
-  DescribeTodoFn,
-  Framework,
   Identity,
   InitializeOptions,
   Initialized,
@@ -52,9 +47,46 @@ export type {
   Provider,
   Provides,
   TestContext,
-  TestFn,
-  TestTodoFn,
-  Testable,
 } from "./Types";
+
+/**
+ * The framework side. `Framework`, from its own module, is the structural bound
+ * an incoming module must satisfy; everything else here is the surface handed
+ * back, derived from it. `DescribeSurface`/`TestSurface` name that surface, and
+ * `Each`/`DescribeEach` are `.each`'s two call forms.
+ *
+ * The `OptionalBody*`/`OptionalCallback*` names are the surfaces on which a
+ * name-only registration is legal — what `it.skip`/`it.todo` and
+ * `describe.todo` hand back. They are named for that property rather than for a
+ * modifier because, on the test side, two modifiers produce one type; and not
+ * "pending", because `describe.skip` is pending yet keeps a required callback.
+ *
+ * `DescribeSurface` and `TestSurface` take the framework's own declared type as
+ * their first parameter and expose only the modifiers it declares: this wrapper
+ * forwards `.only`/`.skip`/`.todo`/`.failing`/`.concurrent`, so promising one
+ * the runner does not have would be promising something untrue. `.each` and the
+ * `*If` forms are built here rather than forwarded — `.each` is therefore
+ * unconditional, present even on runners with no native `.each`, while each
+ * `*If` appears only when some framework modifier can honour it. Where a
+ * runner's own declarations claim more than its runtime delivers, that is
+ * inherited rather than invented.
+ */
+export type { Framework } from "./Framework/Types";
+
+export type {
+  DescribeEach,
+  DescribeFn,
+  DescribeSurface,
+  OptionalBodyTestEach,
+  OptionalBodyTestFn,
+  OptionalBodyTestSurface,
+  OptionalCallbackDescribeEach,
+  OptionalCallbackDescribeFn,
+  OptionalCallbackDescribeSurface,
+  SuiteScope,
+  TestEach,
+  TestFn,
+  TestSurface,
+} from "./Surface/Types";
 
 export type { AnyFn } from "./Utility/Types";

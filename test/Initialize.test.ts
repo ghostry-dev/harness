@@ -1,6 +1,7 @@
 import {
   initialize,
   HarnessError,
+  type AnyFn,
   type Identity,
   type Integration,
   type Outcome,
@@ -561,6 +562,423 @@ test(".only/.skip/.todo forward to the framework and still wrap the body", () =>
     "todo-test",
   ]);
   expect(identities[0]!.path).toEqual(["only-suite"]);
+});
+
+test("it.each registers one test per row with identity.row and context.row", () => {
+  const identities: Identity[] = [];
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [tracing("probe", ["n"], [], identities)],
+  });
+
+  const seen: unknown[] = [];
+  it.each([
+    [1, 2],
+    [3, 4],
+  ])("adds %d and %d", (context) => {
+    seen.push(context.row);
+  });
+
+  const recorded = testsOf(framework);
+  expect(recorded.map((call) => call.name)).toEqual([
+    "adds 1 and 2",
+    "adds 3 and 4",
+  ]);
+  expect(recorded[0]!.fn!.length).toBe(0);
+
+  invoke(recorded[0]!);
+  invoke(recorded[1]!);
+
+  expect(seen).toEqual([
+    [1, 2],
+    [3, 4],
+  ]);
+  expect(identities.map((identity) => identity.row)).toEqual([0, 1]);
+  expect(identities[0]!.name).toBe("adds 1 and 2");
+});
+
+/**
+ * Both index tokens are 0-based, as they are in jest and vitest, so they agree
+ * with `identity.row`; `%$` is vitest's 1-based counterpart.
+ */
+test("it.each interpolates object rows and $# / %# / %$", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  it.each([
+    { a: 1, b: 2 },
+    { a: 3, b: 4 },
+  ])("$a+$b at $# %# %$", () => {});
+
+  expect(testsOf(framework).map((call) => call.name)).toEqual([
+    "1+2 at 0 0 1",
+    "3+4 at 1 1 2",
+  ]);
+});
+
+/**
+ * `$key` substitutes through a replacer function. Passing the value as a
+ * replacement string instead would let `$&`, `` $` ``, `$'` and `$1` inside a
+ * row be interpreted as replacement patterns — `{ a: "x$&y" }` rendered as
+ * `x$ay`, silently, in the test's own name.
+ */
+test("it.each inserts a row value containing $& verbatim", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  it.each([{ a: "x$&y" }])("$a", () => {});
+
+  expect(testsOf(framework)[0]!.name).toBe("x$&y");
+});
+
+/**
+ * Printf codes run for object rows too — the row is the single argument — so
+ * `%%` unescapes rather than reaching the reporter as a literal `%%`.
+ */
+test("it.each runs printf codes for object rows, including %%", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  it.each([{ a: 1 }])("100%% of %s for $a", () => {});
+
+  expect(testsOf(framework)[0]!.name).toBe('100% of {"a":1} for 1');
+});
+
+test("it.each %i truncates, %d and %f do not", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  it.each([[1.7, 1.7, 1.7]])("%i %d %f", () => {});
+
+  expect(testsOf(framework)[0]!.name).toBe("1 1.7 1.7");
+});
+
+/**
+ * A table that resolves to no rows registers no tests, and a suite that ran
+ * nothing still reports green — the one failure this package cannot let pass
+ * quietly. Thrown at `.each(table)`, before a name is even supplied.
+ */
+test("it.each rejects a table that would register no tests", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  expect(() => it.each("oops" as unknown as unknown[])).toThrow(
+    HarnessError.EachTableError,
+  );
+  expect(() => it.each([])).toThrow(HarnessError.EachTableError);
+  expect(
+    () =>
+      it.each`
+        a | b
+      `,
+  ).toThrow(HarnessError.EachTableError);
+  expect(framework.calls).toEqual([]);
+
+  try {
+    it.each([]);
+    throw new Error("expected EachTableError");
+  } catch (error) {
+    expect(error).toBeInstanceOf(HarnessError.EachTableError);
+    if (error instanceof HarnessError.EachTableError) {
+      expect(error.reason).toBe("empty");
+    }
+  }
+});
+
+test("it.each rejects a tagged table whose last row is short of its headings", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  try {
+    it.each`
+      a    | b
+      ${1} | ${2}
+      ${3}
+    `;
+    throw new Error("expected EachTableError");
+  } catch (error) {
+    expect(error).toBeInstanceOf(HarnessError.EachTableError);
+    if (error instanceof HarnessError.EachTableError) {
+      expect(error.reason).toBe("incomplete");
+    }
+  }
+  expect(framework.calls).toEqual([]);
+});
+
+/**
+ * `row` is the one context key this library writes itself. An integration
+ * contributing it would win outside a `.each` test and lose inside one, so the
+ * same key would mean two different things depending on how the test was
+ * registered — a setup mistake, rejected the way a collision is.
+ */
+test("initialize throws on an integration contributing `row`, eagerly", () => {
+  const framework = recordingFramework();
+
+  try {
+    initialize({ framework, integrations: [tracing("probe", ["row"], [])] });
+    throw new Error("expected ReservedContextKeyError");
+  } catch (error) {
+    expect(error).toBeInstanceOf(HarnessError.ReservedContextKeyError);
+    if (error instanceof HarnessError.ReservedContextKeyError) {
+      expect(error.key).toBe("row");
+      expect(error.integration).toBe("probe");
+    }
+  }
+  expect(framework.calls).toEqual([]);
+});
+
+test("it.skip.each and it.todo.each expand, body omitted", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  it.skip.each([1, 2])("skipped %s", () => {});
+  it.todo.each([3])("todo %s");
+
+  expect(testsOf(framework).map((call) => [call.modifier, call.name])).toEqual([
+    ["skip", "skipped 1"],
+    ["skip", "skipped 2"],
+    ["todo", "todo 3"],
+  ]);
+  expect(testsOf(framework)[2]!.fn).toBeUndefined();
+});
+
+test("it.todoIf and it.failingIf choose a surface from the condition", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  it.todoIf(true)("pending", () => {});
+  it.todoIf(false)("live", () => {});
+  it.failingIf(true)("expected to fail", () => {});
+  it.failingIf(false)("ordinary", () => {});
+
+  expect(testsOf(framework).map((call) => [call.modifier, call.name])).toEqual([
+    ["todo", "pending"],
+    [undefined, "live"],
+    ["failing", "expected to fail"],
+    [undefined, "ordinary"],
+  ]);
+});
+
+/**
+ * An on gate the framework cannot express throws. Falling back to the live
+ * surface would run a test the caller explicitly gated off — silently, and
+ * green.
+ *
+ * A typed caller cannot reach this: on a framework declaring no `skip`/`todo`/
+ * `failing`, the derived surface has no `skipIf`/`failingIf` at all, which
+ * `Initialize.types.test.ts` pins. The cast is deliberate, standing in for the
+ * callers the types cannot reach — plain JavaScript, and a framework typed
+ * loosely enough that the modifier looks present.
+ */
+test("a *If gate throws when the framework exposes no modifier that can honour it", () => {
+  const bare = {
+    describe: (() => {}) as AnyFn,
+    it: (() => {}) as AnyFn,
+    expect: (() => {}) as AnyFn,
+  };
+  const initialized = initialize({ framework: bare });
+  const it = initialized.it as unknown as {
+    skipIf(condition: boolean): unknown;
+    failingIf(condition: boolean): unknown;
+  };
+
+  try {
+    it.skipIf(true);
+    throw new Error("expected ModifierUnsupportedError");
+  } catch (error) {
+    expect(error).toBeInstanceOf(HarnessError.ModifierUnsupportedError);
+    if (error instanceof HarnessError.ModifierUnsupportedError) {
+      expect(error.modifier).toBe("skipIf");
+      expect(error.wanted).toEqual(["skip", "todo"]);
+    }
+  }
+  expect(() => it.failingIf(true)).toThrow(
+    HarnessError.ModifierUnsupportedError,
+  );
+  expect(it.skipIf(false)).toBe(initialized.it);
+});
+
+test("describe.each tagged template fills the row from headings and values", () => {
+  const framework = recordingFramework();
+  const { describe } = initialize({ framework });
+
+  const rows: unknown[] = [];
+  describe.each`
+    label  | n
+    ${"a"} | ${1}
+    ${"b"} | ${2}
+  `("suite $label/$n", ({ row }) => {
+    rows.push(row);
+  });
+
+  expect(
+    framework.calls
+      .filter((call) => call.kind === "describe")
+      .map((call) => call.name),
+  ).toEqual(["suite a/1", "suite b/2"]);
+  expect(rows).toEqual([
+    { label: "a", n: 1 },
+    { label: "b", n: 2 },
+  ]);
+});
+
+test("`.each` on a suite's own `it` registers at that suite's path", () => {
+  const identities: Identity[] = [];
+  const framework = recordingFramework("deferred");
+  const { describe } = initialize({
+    framework,
+    integrations: [tracing("probe", ["n"], [], identities)],
+  });
+
+  describe("outer", ({ it }) => {
+    it.each([1, 2])("row %s", () => {});
+  });
+
+  for (const recorded of testsOf(framework)) invoke(recorded);
+
+  expect(
+    identities.map((identity) => [identity.path, identity.name, identity.row]),
+  ).toEqual([
+    [["outer"], "row 1", 0],
+    [["outer"], "row 2", 1],
+  ]);
+});
+
+/**
+ * A title with no placeholder gives every row the same name, so `identity.row`
+ * is the only thing keeping their scopes apart. `describe.each` has no such
+ * fallback — see AGENTS.md.
+ */
+test("rows with identical titles are still distinct identities", () => {
+  const identities: Identity[] = [];
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [tracing("probe", ["n"], [], identities)],
+  });
+
+  it.each([1, 2])("same", () => {});
+
+  for (const recorded of testsOf(framework)) invoke(recorded);
+
+  expect(identities.map((identity) => [identity.name, identity.row])).toEqual([
+    ["same", 0],
+    ["same", 1],
+  ]);
+});
+
+test("it.each tagged template fills row from headings and values", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  const seen: unknown[] = [];
+  it.each`
+    a    | b
+    ${1} | ${2}
+    ${3} | ${4}
+  `("$a and $b", (context) => {
+    seen.push(context.row);
+  });
+
+  const recorded = testsOf(framework);
+  expect(recorded.map((call) => call.name)).toEqual(["1 and 2", "3 and 4"]);
+  invoke(recorded[0]!);
+  invoke(recorded[1]!);
+  expect(seen).toEqual([
+    { a: 1, b: 2 },
+    { a: 3, b: 4 },
+  ]);
+});
+
+test("it.only.each forwards the only modifier", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  it.only.each([1, 2])("n=%s", () => {});
+
+  expect(testsOf(framework).map((call) => [call.modifier, call.name])).toEqual([
+    ["only", "n=1"],
+    ["only", "n=2"],
+  ]);
+});
+
+test("it.skipIf chooses skip or the live surface", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  it.skipIf(true)("gated", () => {});
+  it.skipIf(false)("live", () => {});
+
+  expect(testsOf(framework).map((call) => [call.modifier, call.name])).toEqual([
+    ["skip", "gated"],
+    [undefined, "live"],
+  ]);
+});
+
+test("it.failing and it.concurrent forward to the framework", () => {
+  const identities: Identity[] = [];
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [tracing("probe", ["n"], [], identities)],
+  });
+
+  it.failing("will fail", () => {});
+  it.concurrent("parallel", () => {});
+
+  expect(testsOf(framework).map((call) => [call.modifier, call.name])).toEqual([
+    ["failing", "will fail"],
+    ["concurrent", "parallel"],
+  ]);
+
+  invoke(testsOf(framework)[0]!);
+  invoke(testsOf(framework)[1]!);
+  expect(identities.map((identity) => identity.name)).toEqual([
+    "will fail",
+    "parallel",
+  ]);
+});
+
+test("describe.each puts row on the scope and interpolates the suite name", () => {
+  const identities: Identity[] = [];
+  const framework = recordingFramework();
+  const { describe } = initialize({
+    framework,
+    integrations: [tracing("probe", ["n"], [], identities)],
+  });
+
+  const rows: unknown[] = [];
+  describe.each([{ label: "one" }, { label: "two" }])(
+    "suite $label",
+    ({ it, row }) => {
+      rows.push(row);
+      it("leaf", () => {});
+    },
+  );
+
+  expect(
+    framework.calls
+      .filter((call) => call.kind === "describe")
+      .map((call) => call.name),
+  ).toEqual(["suite one", "suite two"]);
+
+  for (const recorded of testsOf(framework)) invoke(recorded);
+
+  expect(rows).toEqual([{ label: "one" }, { label: "two" }]);
+  expect(identities.map((identity) => [identity.path, identity.row])).toEqual([
+    [["suite one"], undefined],
+    [["suite two"], undefined],
+  ]);
+});
+
+test("it.each forwards extra arguments after the body", () => {
+  const framework = recordingFramework();
+  const { it } = initialize({ framework });
+
+  it.each([1])("timed", () => {}, 1_000);
+
+  expect(testsOf(framework)[0]!.rest).toEqual([1_000]);
 });
 
 test("compose returns the body's value, including a promise", async () => {
