@@ -6,25 +6,29 @@
  * each library carrying a copy.
  *
  * Identity is `{ kind, path, name, row }` and nothing else. `describe`/`it`
- * already know all four at registration.
+ * already know all four at registration; `beforeAll`/`afterAll` construct a
+ * `"suite"` identity from the same path.
  *
  * @module
  */
 
 /**
- * Wrap a test-framework module so every `it`/`test` body runs inside `compose`
- * — each integration's `setup`/`around`, with its `provides` merged into the
- * context regardless. Returns `{ describe, it, test, expect, framework }` —
- * `it` and `test` are one implementation under two names, `expect` is bound so
- * a destructure does not drop `this`, and `framework` is the unchanged module.
+ * Wrap a test-framework module so every `it`/`test` body, and every wrapped
+ * hook, runs inside the composed frame — each integration's `setup`/`around`,
+ * with its `provides` merged into the context regardless. Returns `{ describe,
+ * it, test, expect, beforeEach, afterEach, framework }`, plus
+ * `beforeAll`/`afterAll` when the runner declares them — `it` and `test` are
+ * one implementation under two names, `expect` is bound so a destructure does
+ * not drop `this`, and `framework` is the unchanged module.
  */
 export { initialize } from "./Core";
 
 /**
  * `HarnessError` is the base; `IntegrationKeyCollisionError` is two
  * integrations contributing the same context key; `PrototypePollutionError` is
- * a context key that would reach `Object.prototype`; `AsyncDescribeError` is a
- * `describe` callback that returned a thenable.
+ * a context key that would reach `Object.prototype`; `AmbientHookError` is a
+ * top-level `beforeEach`/`afterEach`; `AsyncDescribeError` is a `describe`
+ * callback that returned a thenable.
  */
 export { HarnessError } from "./Error";
 
@@ -69,7 +73,12 @@ export type {
  * unconditional, present even on runners with no native `.each`, while each
  * `*If` appears only when some framework modifier can honour it. Where a
  * runner's own declarations claim more than its runtime delivers, that is
- * inherited rather than invented.
+ * inherited rather than invented. `beforeEach`/`afterEach` are built here too
+ * and are unconditional; `beforeAll`/`afterAll` follow the runner.
+ *
+ * `HookSurface` is that group as one type — the four members `initialize`
+ * returns and every `SuiteScope` carries — and `HookBody` is what each of them
+ * takes.
  */
 export type { Framework } from "./Framework/Types";
 
@@ -77,15 +86,19 @@ export type {
   DescribeEach,
   DescribeFn,
   DescribeSurface,
+  HookBody,
+  HookSurface,
   OptionalBodyTestEach,
   OptionalBodyTestFn,
   OptionalBodyTestSurface,
   OptionalCallbackDescribeEach,
   OptionalCallbackDescribeFn,
   OptionalCallbackDescribeSurface,
+  SuiteHookFn,
   SuiteScope,
   TestEach,
   TestFn,
+  TestHookFn,
   TestSurface,
 } from "./Surface/Types";
 

@@ -6,7 +6,10 @@ import {
   type Integration,
   type Outcome,
 } from "@ghostry/harness";
-import { recordingFramework } from "./fixtures/framework";
+import {
+  recordingFramework,
+  recordingFrameworkWithoutSuiteHooks,
+} from "./fixtures/framework";
 
 /**
  * Compile-time assertions — see fabricator's `Fabrication.types.test.ts` for
@@ -32,11 +35,16 @@ const framework = recordingFramework();
 const initialized = initialize({ framework, integrations: [left, right] });
 const empty = initialize({ framework });
 const bunInitialized = initialize({ framework: bun });
+const noSuiteHooks = initialize({
+  framework: recordingFrameworkWithoutSuiteHooks(),
+});
 
 type ItFn = Exclude<Parameters<typeof initialized.it>[1], undefined>;
 type DescribeCb = Parameters<typeof initialized.describe>[1];
 type Scope = Parameters<DescribeCb>[0];
 type EmptyItFn = Exclude<Parameters<typeof empty.it>[1], undefined>;
+type BeforeEachFn = Parameters<typeof initialized.beforeEach>[0];
+type BeforeAllFn = Parameters<typeof initialized.beforeAll>[0];
 
 const eachRegistrar = initialized.it.each([
   [1, "a"] as [number, string],
@@ -118,6 +126,8 @@ type Has<$Surface, $Key extends string> = $Key extends keyof $Surface
   ? true
   : false;
 
+type BareScope = Parameters<Parameters<typeof bare.describe>[1]>[0];
+
 export type Assertions = [
   /**
    * The point of deriving: a modifier the framework does not declare is absent
@@ -187,9 +197,17 @@ export type Assertions = [
   >,
   Expect<Equal<Cleanup, (outcome: Outcome) => void | PromiseLike<void>>>,
   /**
-   * Two integrations merge by intersection into the body's first parameter.
+   * Two integrations merge by intersection into the body's first parameter,
+   * `Readonly` — `enterFrame` writes those keys non-writable, and the type says
+   * so first. `Readonly` also flattens the intersection, which is why the
+   * expectation is one object rather than two intersected.
    */
-  Expect<Equal<Parameters<ItFn>[0], { left: number } & { right: string }>>,
+  Expect<
+    Equal<
+      Parameters<ItFn>[0],
+      { readonly left: number; readonly right: string }
+    >
+  >,
   /**
    * No integrations: the body still receives an object, just an empty one.
    */
@@ -218,15 +236,17 @@ export type Assertions = [
   Expect<
     Equal<
       EachContext,
-      { left: number } & { right: string } & { readonly row: [number, string] }
+      { readonly left: number; readonly right: string } & {
+        readonly row: [number, string];
+      }
     >
   >,
   Expect<Equal<"row" extends keyof Parameters<ItFn>[0] ? true : false, false>>,
   Expect<
     Equal<
       TaggedContext,
-      { left: number } & { right: string } & {
-        readonly row: Record<string, unknown>;
+      { readonly left: number; readonly right: string } & {
+        readonly row: Readonly<Record<string, unknown>>;
       }
     >
   >,
@@ -243,4 +263,49 @@ export type Assertions = [
       false
     >
   >,
+  /**
+   * `beforeAll`/`afterAll` follow the runner; `beforeEach`/`afterEach` are
+   * built here, so they survive a framework that declares neither suite hook.
+   */
+  Expect<Equal<Has<typeof initialized, "beforeAll">, true>>,
+  Expect<Equal<Has<typeof initialized, "afterAll">, true>>,
+  Expect<Equal<Has<typeof bunInitialized, "beforeAll">, true>>,
+  Expect<Equal<Has<typeof noSuiteHooks, "beforeAll">, false>>,
+  Expect<Equal<Has<typeof noSuiteHooks, "afterAll">, false>>,
+  Expect<Equal<Has<typeof noSuiteHooks, "beforeEach">, true>>,
+  Expect<Equal<Has<typeof noSuiteHooks, "afterEach">, true>>,
+  Expect<Equal<Has<typeof bare, "beforeAll">, false>>,
+  Expect<Equal<Has<typeof bare, "beforeEach">, true>>,
+  /**
+   * The hook parameter is the same merged context the body receives.
+   */
+  Expect<
+    Equal<
+      Parameters<BeforeEachFn>[0],
+      { readonly left: number; readonly right: string }
+    >
+  >,
+  Expect<
+    Equal<
+      Parameters<BeforeAllFn>[0],
+      { readonly left: number; readonly right: string }
+    >
+  >,
+  /**
+   * `beforeEach` is library-dispatched: a second argument is not a runner
+   * option this library can honour. `beforeAll` forwards trailing args.
+   */
+  Expect<Equal<Parameters<typeof initialized.beforeEach>["length"], 1>>,
+  Expect<Equal<Parameters<typeof initialized.beforeAll>["length"], number>>,
+  /**
+   * `SuiteScope` carries all four, matching the ambient surface.
+   */
+  Expect<Equal<Has<Scope, "beforeEach">, true>>,
+  Expect<Equal<Has<Scope, "afterEach">, true>>,
+  Expect<Equal<Has<Scope, "beforeAll">, true>>,
+  Expect<Equal<Has<Scope, "afterAll">, true>>,
+  Expect<Equal<Scope["beforeEach"], typeof initialized.beforeEach>>,
+  Expect<Equal<Scope["beforeAll"], typeof initialized.beforeAll>>,
+  Expect<Equal<Has<BareScope, "beforeAll">, false>>,
+  Expect<Equal<Has<BareScope, "beforeEach">, true>>,
 ];

@@ -52,7 +52,7 @@ export namespace HarnessError {
   /**
    * Thrown eagerly at `initialize()` when an integration declares a context key
    * that would reach `Object.prototype`. Developer-written keys, so throwing is
-   * actionable — contrast `compose`, which writes a contribution that still
+   * actionable — contrast `enterFrame`, which writes a contribution that still
    * carries one with `defineProperty` rather than rejecting it mid-test.
    */
   export class PrototypePollutionError extends HarnessError {
@@ -155,6 +155,45 @@ export namespace HarnessError {
         `it.${modifier}(true) cannot gate this test: the framework's it `
         + `exposes none of ${wanted.map((name) => `"${name}"`).join(", ")}. `
         + `Running the test unmodified would ignore the gate.`;
+    }
+  }
+
+  /**
+   * A `beforeEach`/`afterEach` was called with no suite in scope. Those hooks
+   * are library-dispatched and keyed by suite node, so there has to be one.
+   *
+   * Two situations reach this, and they are not distinguishable here — the
+   * ambient cursor reads `undefined` for both:
+   *
+   * At the file's top level there is no suite at all, and no runner call that
+   * would file-scope one. On bun, which loads every test file into one module
+   * registry, a top-level hook on a shared `initialize` would run for every
+   * test in every file. Put it inside a `describe`, or use
+   * `framework.beforeEach` through the escape hatch, accepting that a hook
+   * dispatched there gets no context from this library.
+   *
+   * After an `await` in an addressed `describe` the cursor has already been
+   * restored, exactly as it has for the ambient `it` — see
+   * {@link AsyncDescribeError}. Access the hook from the suite scope, where it
+   * resolves lexically and an `await` cannot disturb it.
+   */
+  export class AmbientHookError extends HarnessError {
+    constructor(
+      /**
+       * The hook that was called with no enclosing suite.
+       */
+      public readonly hook: "beforeEach" | "afterEach",
+    ) {
+      super();
+      this.name = "AmbientHookError";
+      this.message =
+        `${hook}() was called with no suite in scope, so this library has `
+        + `nothing to attach it to. Inside an addressed describe, access it `
+        + `from the suite scope — describe("…", async ({ ${hook} }) => { … }) `
+        + `— since an await has already restored the ambient cursor. At the `
+        + `file's top level, put it inside a describe, or use `
+        + `framework.${hook} through the escape hatch, accepting that a hook `
+        + `dispatched there gets no context.`;
     }
   }
 

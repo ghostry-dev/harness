@@ -1,13 +1,7 @@
-import {
-  assignOwn,
-  interpolateTitle,
-  ROW_KEY,
-  rowsFrom,
-  type EachRow,
-} from "../Each";
+import { interpolateTitle, ROW_KEY, rowsFrom, type EachRow } from "../Each";
 import { HarnessError } from "../Error";
 import type { AnyFramework, Framework } from "../Framework/Types";
-import { bound, isThenable } from "../Utility";
+import { assignOwn, bound, isThenable } from "../Utility";
 import type { AnyFn } from "../Utility/Types";
 import { invokeNative, redecorate } from "./Core";
 import type { Cursor, DescribeSurface, Suite } from "./Types";
@@ -19,7 +13,7 @@ import type { Cursor, DescribeSurface, Suite } from "./Types";
  * site needs a cast.
  *
  * Order matters: `() => unknown` is a subtype of `(scope: object) => unknown`,
- * so a predicate must narrow *to the ambient form*. Narrowing the other way
+ * so a predicate must narrow _to the ambient form_. Narrowing the other way
  * excludes both members and leaves `never`.
  */
 type DescribeCallback = ((scope: object) => unknown) | (() => unknown);
@@ -132,7 +126,8 @@ function wrapDescribe(
 
       /**
        * Hand the thenable back so the runner applies its own collection
-       * semantics — bun and vitest await it, jest rejects it, mocha ignores it.
+       * semantics — bun and vitest await it, jest rejects it, mocha ignores
+       * it.
        */
       return result;
     });

@@ -7,7 +7,7 @@ import type { AnyFn } from "@ghostry/harness";
  * eagerly or deferred (see `Collection`).
  */
 export type RecordedCall = {
-  readonly kind: "describe" | "it";
+  readonly kind: "describe" | "it" | "beforeAll" | "afterAll";
   readonly modifier:
     | "only"
     | "skip"
@@ -51,6 +51,8 @@ export type RecordingFramework = {
     readonly concurrent: AnyFn;
   };
   readonly test: RecordingFramework["it"];
+  readonly beforeAll: AnyFn;
+  readonly afterAll: AnyFn;
   readonly expect: (
     this: unknown,
     ...args: unknown[]
@@ -97,6 +99,15 @@ function makeIt(
 ): AnyFn {
   return ((name: string, fn?: () => unknown, ...rest: unknown[]) => {
     calls.push({ kind: "it", modifier, name, fn, rest });
+  }) as AnyFn;
+}
+
+function makeHook(
+  calls: RecordedCall[],
+  kind: "beforeAll" | "afterAll",
+): AnyFn {
+  return ((fn?: () => unknown, ...rest: unknown[]) => {
+    calls.push({ kind, modifier: undefined, name: "", fn, rest });
   }) as AnyFn;
 }
 
@@ -161,7 +172,30 @@ export function recordingFramework(
     return { thisValue: this, args };
   }
 
-  return { describe, it, test: it, expect, calls };
+  return {
+    describe,
+    it,
+    test: it,
+    beforeAll: makeHook(calls, "beforeAll"),
+    afterAll: makeHook(calls, "afterAll"),
+    expect,
+    calls,
+  };
+}
+
+/**
+ * The same stand-in with no `beforeAll`/`afterAll`, so `initialize` infers
+ * those members absent rather than present-and-throwing.
+ */
+export function recordingFrameworkWithoutSuiteHooks(
+  collection: Collection = "eager",
+  suiteThis?: unknown,
+): Omit<RecordingFramework, "beforeAll" | "afterAll"> {
+  const { describe, it, test, expect, calls } = recordingFramework(
+    collection,
+    suiteThis,
+  );
+  return { describe, it, test, expect, calls };
 }
 
 export function testsOf(
@@ -171,8 +205,8 @@ export function testsOf(
 }
 
 /**
- * Invoke a recorded `it` body. Tests that did not register a body (a name-only
- * `.todo`) have nothing to run.
+ * Invoke a recorded `it` body or suite hook. Tests that did not register a body
+ * (a name-only `.todo`) have nothing to run.
  *
  * `thisArg` stands in for the context a runner calls a body with — mocha's
  * `Context`, which carries `this.timeout()`. Omitted, it matches the runners

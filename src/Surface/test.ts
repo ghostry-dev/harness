@@ -1,18 +1,13 @@
-import { compose } from "../Compose";
-import {
-  assignOwn,
-  interpolateTitle,
-  ROW_KEY,
-  rowsFrom,
-  type EachRow,
-} from "../Each";
+import { enterFrame } from "../Frame";
+import { interpolateTitle, rowsFrom, type EachRow } from "../Each";
 import { HarnessError } from "../Error";
 import type { AnySource, Framework } from "../Framework/Types";
 import type { AnyIntegration, Identity } from "../Types";
 import { bound } from "../Utility";
 import type { AnyFn } from "../Utility/Types";
-import { invokeNative, redecorate } from "./Core";
-import type { Cursor, Suite, TestSurface } from "./Types";
+import { invokeNative, pathOf, redecorate } from "./Core";
+import { hooksFor, type HookRegistry } from "./hooks";
+import type { Cursor, TestSurface } from "./Types";
 
 type TestRegistrar = (
   name: string,
@@ -28,6 +23,7 @@ export function test(
   owner: object,
   cursor: Cursor,
   integrations: ReadonlyArray<AnyIntegration>,
+  registry: HookRegistry,
 ): AnyTestSurface {
   const local = new WeakMap<object, AnyTestSurface>();
 
@@ -38,7 +34,12 @@ export function test(
     const cached = local.get(native);
     if (typeof cached !== "undefined") return cached;
 
-    const registrar = wrapTest(bound(native, bindOwner), cursor, integrations);
+    const registrar = wrapTest(
+      bound(native, bindOwner),
+      cursor,
+      integrations,
+      registry,
+    );
     const wrapped = asCallable(registrar);
     local.set(native, wrapped);
 
@@ -64,12 +65,12 @@ export function test(
 }
 
 /**
- * The `*If` forms choose a surface from a boolean; they do not wrap one. An
- * off gate is the live surface, unchanged. An on gate that the framework
- * cannot express throws rather than falling back to the live surface —
- * running a test the caller explicitly gated off is the one thing the call
- * cannot mean, and it would pass silently. `.skip` and `.todo` stand in for
- * each other: both leave the body unrun, which is what was asked for.
+ * The `*If` forms choose a surface from a boolean; they do not wrap one. An off
+ * gate is the live surface, unchanged. An on gate that the framework cannot
+ * express throws rather than falling back to the live surface — running a test
+ * the caller explicitly gated off is the one thing the call cannot mean, and it
+ * would pass silently. `.skip` and `.todo` stand in for each other: both leave
+ * the body unrun, which is what was asked for.
  */
 function gate<const $Modifier extends "todoIf" | "skipIf" | "failingIf">(
   wrapped: AnyTestSurface,
@@ -91,10 +92,13 @@ function gate<const $Modifier extends "todoIf" | "skipIf" | "failingIf">(
 }
 
 /**
- * Wrap a native `it`/`test` (or a modifier) so the body runs inside `compose`.
- * The identity is resolved at registration, while the cursor still points at
- * the enclosing suite: by the time the runner invokes the body, collection has
- * moved on.
+ * Wrap a native `it`/`test` (or a modifier) so the body runs inside the
+ * composed frame. The identity is resolved at registration, while the cursor
+ * still points at the enclosing suite: by the time the runner invokes the body,
+ * collection has moved on. The suite node is closed over too, so hook lists can
+ * be gathered when the body _runs_ — a `beforeEach` written after this `it` in
+ * the same describe still applies, matching every real runner. Collection
+ * completes before any body runs, under both eager and deferred nesting.
  *
  * Zero declared parameters on the function handed to the runner: a
  * Jest-compatible runner reads `fn.length` to pick promise-based completion
@@ -109,38 +113,41 @@ function gate<const $Modifier extends "todoIf" | "skipIf" | "failingIf">(
  * which leaves callers free to annotate their own (`function (this: Context,
  * context)`) — declaring `this: unknown` here would reject exactly that.
  *
- * `.each` passes `row` so `identity.row` is the index and `context.row` is the
- * table value. Those have to be closed over here: the runner's own `.each`
- * calls the body with positional arguments and does not tell us the index.
+ * `.each` passes `row` so `identity.row` is the index and `enterFrame` writes
+ * `context.row` from the table value. Those have to be closed over here: the
+ * runner's own `.each` calls the body with positional arguments and does not
+ * tell us the index.
  */
 function wrapTest(
   native: AnyFn,
   cursor: Cursor,
   integrations: ReadonlyArray<AnyIntegration>,
+  registry: HookRegistry,
 ): TestRegistrar {
   return (name, fn, rest = [], row) => {
     if (typeof fn === "undefined") {
       return invokeNative(native, name, undefined, ...rest);
     }
 
+    const suite = cursor.current;
     const identity: Identity = {
       kind: "test",
-      path: pathOf(cursor.current),
+      path: pathOf(suite),
       name,
       row: typeof row === "undefined" ? undefined : row.index,
     };
 
     const wrapped = function (this: unknown) {
-      return compose(integrations, identity, (context) => {
-        if (typeof row !== "undefined") {
-          assignOwn(context, ROW_KEY, row.value);
-        }
-
-        return (fn as (this: unknown, context: object) => unknown).call(
-          this,
-          context,
-        );
-      });
+      return enterFrame(
+        integrations,
+        identity,
+        { row, ...hooksFor(suite, registry) },
+        (context) =>
+          (fn as (this: unknown, context: object) => unknown).call(
+            this,
+            context,
+          ),
+      );
     };
 
     return invokeNative(native, name, wrapped, ...rest);
@@ -153,15 +160,6 @@ function asCallable(registrar: TestRegistrar) {
     fn?: (context: object) => unknown,
     ...rest: unknown[]
   ) => registrar(name, fn, rest)) as AnyTestSurface;
-}
-
-/** Walk the parent links outward, then reverse: outer → inner. */
-function pathOf(suite: Suite | undefined): string[] {
-  const names: string[] = [];
-  for (let node = suite; typeof node !== "undefined"; node = node.parent) {
-    names.push(node.name);
-  }
-  return names.reverse();
 }
 
 export function each(

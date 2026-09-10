@@ -1,5 +1,26 @@
+import { ROW_KEY, type EachRow } from "./Each";
+import type { HookBody } from "./Surface/Types";
 import type { AnyIntegration, Cleanup, Identity, Outcome } from "./Types";
-import { isThenable } from "./Utility";
+import { assignOwn, isThenable } from "./Utility";
+
+/**
+ * Everything about one wrapped invocation that did not come from an
+ * integration: the `.each` row this library writes onto context, and the
+ * library-dispatched hooks gathered from the suite tree. Suite-hook call sites
+ * pass {@link emptyInvocation}.
+ */
+export type Invocation = {
+  readonly row: EachRow | undefined;
+  readonly before: ReadonlyArray<HookBody>;
+  readonly after: ReadonlyArray<HookBody>;
+};
+
+/** Shared by every suite hook: no row, no per-test hooks. */
+export const emptyInvocation: Invocation = {
+  row: undefined,
+  before: [],
+  after: [],
+};
 
 /**
  * Cleanup errors are always logged, and thrown only when the test passed: bun
@@ -111,14 +132,17 @@ function settle<$Return>(
  *
  * Per integration: `around` opens (if declared), `setup` runs inside that frame
  * and its cleanup is recorded, then `provides` is written, then the next
- * integration. Cleanups run inner-first on settlement — the end of the _test_,
- * not the end of the `around` _call_. Those coincide only when the body is
- * synchronous; that is why `setup` is the teardown hook and `around`'s
- * `finally` is not.
+ * integration. At the innermost frame, `afterEach` hooks are pushed as
+ * {@link Cleanup}s (so they run inner-first, before every integration cleanup,
+ * and when a `beforeEach` threw), `row` is written, `beforeEach` hooks run
+ * outer → inner, then the body. Cleanups run inner-first on settlement — the
+ * end of the _test_, not the end of the `around` _call_. Those coincide only
+ * when the body is synchronous; that is why `setup` is the teardown hook and
+ * `around`'s `finally` is not.
  *
- * Returns the body's value unchanged, unless awaiting setup or cleanup requires
- * promoting a synchronous body to a promise. That is the only honest way for a
- * sync test with async teardown to report completion.
+ * Returns the body's value unchanged, unless awaiting setup, a `beforeEach`, or
+ * cleanup requires promoting a synchronous body to a promise. That is the only
+ * honest way for a sync test with async teardown to report completion.
  *
  * A provider runs _inside_ its own integration's `around` frame and after its
  * `setup`, so a value can depend on state that either just established (an open
@@ -127,44 +151,93 @@ function settle<$Return>(
  * Empty `integrations` still calls `body` with an empty object: wrapping is a
  * no-op, not a skipped invocation.
  */
-export function compose<$Context extends object, $Return>(
+export function enterFrame<$Context extends object, $Return>(
   integrations: ReadonlyArray<AnyIntegration>,
   identity: Identity,
+  invocation: Invocation,
   body: (context: $Context) => $Return,
 ): $Return {
   const collected = {} as $Context;
   const cleanups: Cleanup[] = [];
 
-  const invoke = (index: number): $Return => {
+  /**
+   * The innermost frame: everything this invocation contributes, in the order
+   * it has to happen — register `after`, write `row`, run `before`, call the
+   * body.
+   *
+   * `after` is registered before any `before` runs, so a throwing `beforeEach`
+   * still gets its `afterEach` — jest's behaviour. Registering them as
+   * {@link Cleanup}s rather than running them here is what pairs them with an
+   * async body, and is the whole reason the two sides look different:
+   * `runCleanups` fires at test settlement rather than at this call's return,
+   * is already inner-first (so pushing outer → inner runs them inner → outer),
+   * already runs ahead of every integration cleanup, and already logs always
+   * but rethrows only when the test passed — which is exactly "the body's error
+   * wins and the hook's is attached." The `Outcome` each one is handed is
+   * dropped: no runner gives a user hook one.
+   */
+  const enterBody = (): $Return => {
+    for (const hook of invocation.after) {
+      cleanups.push(() => {
+        const result = hook(collected);
+        if (isThenable(result)) return result as PromiseLike<void>;
+      });
+    }
+
+    /**
+     * The one key this library writes itself, before `before` runs so a hook in
+     * an `.each` test sees `context.row`.
+     */
+    if (typeof invocation.row !== "undefined") {
+      assignOwn(collected, ROW_KEY, invocation.row.value);
+    }
+
+    /**
+     * Sequential, with the same thenable discipline `setup` uses: the body must
+     * not start until each hook has settled, and a thenable promotes this
+     * test.
+     */
+    const runBefore = (index: number): $Return => {
+      const hook = invocation.before[index];
+      if (typeof hook === "undefined") return body(collected);
+
+      const prepared = hook(collected);
+      if (!isThenable(prepared)) return runBefore(index + 1);
+      return prepared.then(() => runBefore(index + 1)) as $Return;
+    };
+
+    return runBefore(0);
+  };
+
+  const enterIntegration = (index: number): $Return => {
     const current = integrations[index];
 
-    if (typeof current === "undefined") return body(collected);
+    if (typeof current === "undefined") return enterBody();
 
     const provide = (): $Return => {
       const proceed = (cleanup?: Cleanup | void): $Return => {
         if (typeof cleanup === "function") cleanups.push(cleanup);
-        /**
-         * `defineProperty`, never `Object.assign` or `collected[key] =`, so
-         * `"__proto__"` as a key creates a property instead of triggering its
-         * setter. `provides` is the sole source of keys and is already checked
-         * at `initialize`; this is defense in depth against `compose` ever
-         * being reached with an unchecked integration, not a live gap today.
-         */
+
         for (const key of Object.keys(current.provides)) {
-          Object.defineProperty(collected, key, {
-            configurable: true,
-            enumerable: true,
-            writable: true,
-            value: current.provides[key]!(identity),
-          });
+          const value = current.provides[key]!(identity);
+
+          /**
+           * `provides` is the sole source of these keys and `initialize` has
+           * already checked them, so {@link assignOwn} here is defense in depth
+           * against `enterFrame` ever being reached with an unchecked
+           * integration, not a live gap today.
+           */
+          assignOwn(collected, key, value);
         }
-        return invoke(index + 1);
+
+        return enterIntegration(index + 1);
       };
 
       if (typeof current.setup !== "function") return proceed();
 
       const prepared = current.setup(identity);
       if (!isThenable(prepared)) return proceed(prepared);
+
       /**
        * Providers (and inner integrations) must not run until setup has settled
        * — a provided value may depend on state setup just established. The
@@ -180,33 +253,36 @@ export function compose<$Context extends object, $Return>(
   };
 
   /**
-   * A cleanup can only exist if some integration declares `setup`, so when none
-   * does there is nothing to intercept and no `try`/`catch` goes on the stack
-   * at all. That matters beyond the saved work: bun reports a synchronously
-   * thrown test failure at its _throw_ site, so catching and rethrowing
-   * relocates the reported frame from the user's assertion to library
-   * internals. `error.stack` is identical either way — this is the reporter
-   * following the throw, not a mutated error — so the only fix is not to
-   * catch.
+   * A cleanup can only exist if some integration declares `setup` or this
+   * invocation registered an `afterEach`, so when neither does there is nothing
+   * to intercept and no `try`/`catch` goes on the stack at all. That matters
+   * beyond the saved work: bun reports a synchronously thrown test failure at
+   * its _throw_ site, so catching and rethrowing relocates the reported frame
+   * from the user's assertion to library internals. `error.stack` is identical
+   * either way — this is the reporter following the throw, not a mutated error
+   * — so the only fix is not to catch.
    *
    * The residual is inherent: a suite that does register a cleanup must be
    * intercepted, and a synchronous failure there still reports inside this
    * module. Rejections are unaffected, intercepted or not.
    */
   if (
-    !integrations.some((integration) => typeof integration.setup === "function")
+    invocation.after.length === 0
+    && !integrations.some(
+      (integration) => typeof integration.setup === "function",
+    )
   ) {
-    return invoke(0);
+    return enterIntegration(0);
   }
 
   /**
-   * Only `invoke` is in the `try`. Settlement throwing an `AggregateError`
+   * Only the descent is in the `try`. Settlement throwing an `AggregateError`
    * (cleanup failed, test passed) must not be caught and treated as a test
    * failure — that would run cleanups twice and swallow the aggregate.
    */
   let result: $Return;
   try {
-    result = invoke(0);
+    result = enterIntegration(0);
   } catch (error) {
     return afterBody({ ok: false, error }, undefined as $Return, cleanups);
   }

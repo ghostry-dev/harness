@@ -80,13 +80,62 @@ type WhenSupportedByFramework<$Source, $Keys extends string, $Members> = [
   : $Members;
 
 /**
+ * A hook body: the same first-parameter shape as a wrapped `it`, receiving the
+ * merged context. Used by the suite-keyed registry and by `enterFrame`.
+ */
+export type HookBody<$Context extends object = object> = (
+  context: $Context,
+) => unknown;
+
+/**
+ * Framework-dispatched. Trailing arguments (bun's `HookOptions`) forward.
+ */
+export type SuiteHookFn<$Context extends object> = (
+  fn: HookBody<$Context>,
+  ...rest: unknown[]
+) => unknown;
+
+/**
+ * Library-dispatched, so there is no runner call to carry a per-hook option.
+ * Accepting and ignoring one would be a promise this library cannot keep.
+ */
+export type TestHookFn<$Context extends object> = (
+  fn: HookBody<$Context>,
+) => void;
+
+/**
+ * The four hook members `initialize` installs, and that a {@link SuiteScope}
+ * carries for the same reason it carries `it`: an addressed callback resolves
+ * them lexically. `beforeEach`/`afterEach` are built here, so they are
+ * unconditional; `beforeAll`/`afterAll` are forwarded, so each appears only
+ * when the runner declares it.
+ */
+export type HookSurface<
+  $Framework extends Framework,
+  $Context extends object,
+> = {
+  readonly beforeEach: TestHookFn<$Context>;
+  readonly afterEach: TestHookFn<$Context>;
+} & WhenSupportedByFramework<
+  $Framework,
+  "beforeAll",
+  { readonly beforeAll: SuiteHookFn<$Context> }
+>
+  & WhenSupportedByFramework<
+    $Framework,
+    "afterAll",
+    { readonly afterAll: SuiteHookFn<$Context> }
+  >;
+
+/**
  * The registration surface bound to one suite, handed to that suite's callback.
  * Destructuring it shadows the ambient bindings, so the body reads unchanged:
  * `async ({ it }) => { … it("name", …) }`.
  *
  * `it` and `test` are built from `framework.it` at every scope, matching the
  * runtime — a suite scope re-wraps the same native member, it does not reach
- * for `framework.test`.
+ * for `framework.test`. The four hooks are bound to this suite for the same
+ * reason: an `await` has already restored the ambient cursor.
  *
  * `expect` is absent by design — it is not path-dependent, so the ambient one
  * is already correct.
@@ -98,12 +147,12 @@ export type SuiteScope<
   readonly describe: DescribeSurface<$Framework, $Context>;
   readonly it: TestSurface<$Framework["it"], $Context>;
   readonly test: TestSurface<$Framework["it"], $Context>;
-};
+} & HookSurface<$Framework, $Context>;
 
 /**
  * A `describe`/`describe.only`/`describe.skip` callback. It receives the
  * suite's own scope: `describe`/`it`/`test` bound to _this_ suite rather than
- * to the ambient one.
+ * to the ambient one. The four hooks are on that scope too.
  *
  * Declaring the parameter is what makes an `async` callback legal. Ambient `it`
  * resolves the enclosing suite from a single mutable slot, which an `await`
@@ -189,7 +238,7 @@ export type DescribeEach<
     name: string,
     fn: (
       scope: SuiteScope<$Framework, $Context> & {
-        readonly row: Record<string, unknown>;
+        readonly row: Readonly<Record<string, unknown>>;
       },
     ) => void,
   ) => unknown;
@@ -211,7 +260,7 @@ export type TestEach<$Context extends object> = {
   (
     strings: TemplateStringsArray,
     ...values: unknown[]
-  ): TestFn<$Context & { readonly row: Record<string, unknown> }>;
+  ): TestFn<$Context & { readonly row: Readonly<Record<string, unknown>> }>;
 };
 
 /**
@@ -226,7 +275,9 @@ export type OptionalBodyTestEach<$Context extends object> = {
   (
     strings: TemplateStringsArray,
     ...values: unknown[]
-  ): OptionalBodyTestFn<$Context & { readonly row: Record<string, unknown> }>;
+  ): OptionalBodyTestFn<
+    $Context & { readonly row: Readonly<Record<string, unknown>> }
+  >;
 };
 
 /**
@@ -252,7 +303,7 @@ export type OptionalCallbackDescribeEach<
     name: string,
     fn?: (
       scope: SuiteScope<$Framework, $Context> & {
-        readonly row: Record<string, unknown>;
+        readonly row: Readonly<Record<string, unknown>>;
       },
     ) => void,
   ) => unknown;
@@ -274,10 +325,9 @@ export type OptionalBodyTestSurface<
 > = OptionalBodyTestFn<$Context> & {
   readonly each: OptionalBodyTestEach<$Context>;
 } & {
-  readonly [$Key in SupportedByFramework<
-    $Source,
-    TestModifier
-  >]: OptionalBodyTestSurface<$Source[$Key], $Context>;
+  readonly [
+    $Key in SupportedByFramework<$Source, TestModifier>
+  ]: OptionalBodyTestSurface<$Source[$Key], $Context>;
 };
 
 /**
@@ -294,10 +344,9 @@ export type DescribeSurface<
 > = DescribeFn<$Framework, $Context> & {
   readonly each: DescribeEach<$Framework, $Context>;
 } & {
-  readonly [$Key in SupportedByFramework<
-    $Source,
-    DescribeModifier
-  >]: $Key extends "todo"
+  readonly [
+    $Key in SupportedByFramework<$Source, DescribeModifier>
+  ]: $Key extends "todo"
     ? OptionalCallbackDescribeSurface<$Framework, $Context, $Source[$Key]>
     : DescribeSurface<$Framework, $Context, $Source[$Key]>;
 };
@@ -320,10 +369,9 @@ export type OptionalCallbackDescribeSurface<
 > = OptionalCallbackDescribeFn<$Framework, $Context> & {
   readonly each: OptionalCallbackDescribeEach<$Framework, $Context>;
 } & {
-  readonly [$Key in SupportedByFramework<
-    $Source,
-    DescribeModifier
-  >]: OptionalCallbackDescribeSurface<$Framework, $Context, $Source[$Key]>;
+  readonly [
+    $Key in SupportedByFramework<$Source, DescribeModifier>
+  ]: OptionalCallbackDescribeSurface<$Framework, $Context, $Source[$Key]>;
 };
 
 /**
@@ -345,8 +393,8 @@ export type OptionalCallbackDescribeSurface<
  */
 export type TestSurface<$Source, $Context extends object> = TestFn<$Context> & {
   readonly each: TestEach<$Context>;
-} & TestModifiers<$Source, $Context> &
-  WhenSupportedByFramework<
+} & TestModifiers<$Source, $Context>
+  & WhenSupportedByFramework<
     $Source,
     "skip" | "todo",
     {
@@ -367,8 +415,8 @@ export type TestSurface<$Source, $Context extends object> = TestFn<$Context> & {
             $Context
           >;
     }
-  > &
-  WhenSupportedByFramework<
+  >
+  & WhenSupportedByFramework<
     $Source,
     "failing",
     {

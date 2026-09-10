@@ -1,5 +1,9 @@
 import type { Framework } from "./Framework/Types";
-import type { DescribeSurface, TestSurface } from "./Surface/Types";
+import type {
+  DescribeSurface,
+  HookSurface,
+  TestSurface,
+} from "./Surface/Types";
 import type { UnionToIntersection } from "./Utility/Types";
 
 /**
@@ -10,21 +14,22 @@ import type { UnionToIntersection } from "./Utility/Types";
  * integration) satisfies structurally, so this package depends on none of
  * them.
  *
- * **Carries no file, deliberately.** `describe`/`it` already know `kind`,
- * `path`, `name`, and `row` at registration; nothing has to be discovered from
- * the runtime. That is what lets this library skip stack walking entirely — no
- * `Error.captureStackTrace`, no frame-format differences across V8 and JSC, no
- * `file://` decoding, no symlink or `dist`-versus-`src` questions, and no
- * frame-skip problem for an integration walking its own stack. The accepted
- * cost is that two tests agreeing on `kind`, `path`, and `name` in different
- * files share an identity.
+ * **Carries no file, deliberately.** `describe`/`it`/`beforeAll`/`afterAll`
+ * already know `kind`, `path`, `name`, and `row` at registration; nothing has
+ * to be discovered from the runtime. That is what lets this library skip stack
+ * walking entirely — no `Error.captureStackTrace`, no frame-format differences
+ * across V8 and JSC, no `file://` decoding, no symlink or `dist`-versus-`src`
+ * questions, and no frame-skip problem for an integration walking its own
+ * stack. The accepted cost is that two tests agreeing on `kind`, `path`, and
+ * `name` in different files share an identity.
  */
 export type Identity = {
   /**
    * Disambiguates an empty-named test from its enclosing suite scope — `name`
    * is `""` for both, and `path` never carries a leaf's own name. Two suite
    * identities that share a `path` (`beforeAll` and `afterAll` in one
-   * `describe`) are not disambiguated by this: that collision is intentional.
+   * `describe`) are not disambiguated by this: that collision is intentional,
+   * and both hooks construct that identity.
    */
   readonly kind: "test" | "suite";
   /** Enclosing describe names, outer → inner. */
@@ -112,6 +117,12 @@ type ContextOf<$Integration> =
  * The single first parameter of a wrapped `it`/`test` body — every
  * integration's contribution merged, via intersection, into one object. An
  * empty `integrations` list yields `{}`.
+ *
+ * `Readonly`, and `enterFrame` writes the keys non-writable to match: the
+ * object is the library's, minted per test, and reassigning what an integration
+ * contributed accomplishes nothing durable. Shallow, deliberately — an
+ * integration's own value is its own business. The object is left extensible,
+ * so a hook can still hand the body keys of its own.
  */
 export type TestContext<$Integrations extends ReadonlyArray<AnyIntegration>> = [
   $Integrations,
@@ -119,7 +130,7 @@ export type TestContext<$Integrations extends ReadonlyArray<AnyIntegration>> = [
   ? {}
   : UnionToIntersection<ContextOf<$Integrations[number]>> extends infer $Merged
     ? $Merged extends object
-      ? $Merged
+      ? Readonly<$Merged>
       : {}
     : {};
 
@@ -138,6 +149,8 @@ export type InitializeOptions<
  * What `initialize` returns. `it` and `test` are one implementation under two
  * names. `expect` is the framework's own, bound. `framework` is the unchanged
  * module — the escape hatch for anything this wrapper does not re-export.
+ * `beforeEach`/`afterEach` are built here, so they are unconditional;
+ * `beforeAll`/`afterAll` appear only when `$Framework` declares them.
  */
 export type Initialized<
   $Framework extends Framework,
@@ -148,4 +161,4 @@ export type Initialized<
   readonly test: TestSurface<$Framework["it"], TestContext<$Integrations>>;
   readonly expect: $Framework["expect"];
   readonly framework: $Framework;
-};
+} & HookSurface<$Framework, TestContext<$Integrations>>;

@@ -2,6 +2,7 @@ import { ROW_KEY } from "./Each";
 import { HarnessError } from "./Error";
 import type { Framework } from "./Framework/Types";
 import { describe } from "./Surface/describe";
+import { hookMembers, type HookRegistry } from "./Surface/hooks";
 import { test } from "./Surface/test";
 import type { Cursor, Suite } from "./Surface/Types";
 import type { AnyIntegration, Initialized, InitializeOptions } from "./Types";
@@ -14,9 +15,9 @@ import { bound, isPollutionKey } from "./Utility";
  * All three are setup mistakes; waiting until a body runs would make them look
  * like a flaky test.
  *
- * Reads `Object.keys(integration.provides)` — the same object `compose` reads
- * from — rather than a separately declared list, so there is nothing here that
- * could name a key the integration does not actually contribute.
+ * Reads `Object.keys(integration.provides)` — the same object `enterFrame`
+ * reads from — rather than a separately declared list, so there is nothing here
+ * that could name a key the integration does not actually contribute.
  */
 function assertKeys(integrations: ReadonlyArray<AnyIntegration>): void {
   const seen = new Map<string, string>();
@@ -45,10 +46,10 @@ function assertKeys(integrations: ReadonlyArray<AnyIntegration>): void {
 }
 
 /**
- * Wrap a test-framework module so every `it`/`test` body runs inside `compose`
- * — each integration's `setup`/`around`, its `provides` merged into the context
- * — with an `Identity` derived from the registration-time suite the test was
- * declared in, never from a stack walk.
+ * Wrap a test-framework module so every `it`/`test` body, and every wrapped
+ * hook, runs inside the composed frame — each integration's `setup`/`around`,
+ * its `provides` merged into the context — with an `Identity` derived from the
+ * registration-time suite, never from a stack walk.
  *
  * The framework is a parameter, never an import: this package has zero runtime
  * dependencies, and bun:test / vitest / a recording stand-in are
@@ -64,8 +65,15 @@ export function initialize<
   const integrations = options.integrations ?? [];
   assertKeys(integrations);
 
+  /**
+   * Keyed by the `Suite` node object, not by path: two `describe("x")` blocks
+   * in one file, and two `describe.each` rows whose titles interpolate to the
+   * same string, are distinct nodes at the same path and must not merge.
+   */
+  const registry: HookRegistry = new WeakMap();
+
   const cursor: Cursor = { current: undefined };
-  const it = test(framework.it, framework, cursor, integrations);
+  const it = test(framework.it, framework, cursor, integrations, registry);
 
   /**
    * One scope per suite, over a cursor of its own that is never reassigned.
@@ -74,11 +82,12 @@ export function initialize<
    */
   const scopeFor = (suite: Suite): object => {
     const own: Cursor = { current: suite };
-    const scopedIt = test(framework.it, framework, own, integrations);
+    const scopedIt = test(framework.it, framework, own, integrations, registry);
     return {
       describe: describe(framework.describe, framework, own, scopeFor),
       it: scopedIt,
       test: scopedIt,
+      ...hookMembers(framework, own, integrations, registry),
     };
   };
 
@@ -88,6 +97,7 @@ export function initialize<
     test: it,
     expect: bound(framework.expect, framework),
     framework,
+    ...hookMembers(framework, cursor, integrations, registry),
     /**
      * Through `unknown`: the wrapper builds the maximally-decorated `AnySource`
      * surface, while the caller's is derived from `$Framework`'s own declared

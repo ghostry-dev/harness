@@ -1,12 +1,12 @@
 import { HarnessError } from "./Error";
-import { isPollutionKey } from "./Utility";
+import { assignOwn, isPollutionKey } from "./Utility";
 
 /**
- * The one context key this library writes itself: `.each` assigns the row onto
- * the context of every test it expands. Named here rather than written inline
- * so `initialize` can reject an integration that also contributes it —
- * otherwise `context.row` would mean one thing inside a `.each` test and
- * another outside one.
+ * The one context key this library writes itself: `enterFrame` assigns the
+ * `.each` row onto the context of every test it expands, before `beforeEach`
+ * hooks run. Named here rather than written inline so `initialize` can reject
+ * an integration that also contributes it — otherwise `context.row` would mean
+ * one thing inside a `.each` test and another outside one.
  */
 export const ROW_KEY = "row";
 
@@ -56,15 +56,15 @@ export function parseTaggedTable(
   if (values.length === 0) {
     throw new HarnessError.EachTableError(
       "empty",
-      `a tagged template with headings (${headings.join(" | ")}) but no ` +
-        `\${} values`,
+      `a tagged template with headings (${headings.join(" | ")}) but no `
+        + `\${} values`,
     );
   }
   if (values.length % headings.length !== 0) {
     throw new HarnessError.EachTableError(
       "incomplete",
-      `${headings.length} headings (${headings.join(" | ")}) but ` +
-        `${values.length} values`,
+      `${headings.length} headings (${headings.join(" | ")}) but `
+        + `${values.length} values`,
     );
   }
 
@@ -102,8 +102,8 @@ export function rowsFrom(
   }
   throw new HarnessError.EachTableError(
     "shape",
-    `${describeValue(first)}, where an array of rows or a tagged template was ` +
-      `expected`,
+    `${describeValue(first)}, where an array of rows or a tagged template was `
+      + `expected`,
   );
 }
 
@@ -143,15 +143,6 @@ export function interpolateTitle(
   }
 
   return result;
-}
-
-export function assignOwn(target: object, key: string, value: unknown): void {
-  Object.defineProperty(target, key, {
-    configurable: true,
-    enumerable: true,
-    writable: true,
-    value,
-  });
 }
 
 /**

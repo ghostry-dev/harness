@@ -7,7 +7,12 @@ import {
   type Outcome,
 } from "@ghostry/harness";
 import { expect, spyOn, test } from "bun:test";
-import { invoke, recordingFramework, testsOf } from "./fixtures/framework";
+import {
+  invoke,
+  recordingFramework,
+  recordingFrameworkWithoutSuiteHooks,
+  testsOf,
+} from "./fixtures/framework";
 
 function tracing(
   name: string,
@@ -141,11 +146,11 @@ test("initialize throws on a pollution key, eagerly", () => {
  * The gap `provides` closes. Under the previous `{ keys, run }` shape, `keys`
  * was a separate declaration from what `run`'s contribution object actually
  * carried, so a pollution key smuggled into the contribution without being
- * declared in `keys` reached `compose` unchecked — merged in as an inert own
+ * declared in `keys` reached `enterFrame` unchecked — merged in as an inert own
  * property rather than caught. `provides` is now the _only_ place a key can
  * come from: `assertKeys` at `initialize` reads `Object.keys(provides)`, the
- * same object `compose` reads from, so the same attempt is rejected before any
- * test runs rather than merely neutralized at runtime.
+ * same object `enterFrame` reads from, so the same attempt is rejected before
+ * any test runs rather than merely neutralized at runtime.
  */
 test("a pollution key added directly to `provides` is caught at initialize, not merely neutralized at runtime", () => {
   const framework = recordingFramework();
@@ -981,7 +986,7 @@ test("it.each forwards extra arguments after the body", () => {
   expect(testsOf(framework)[0]!.rest).toEqual([1_000]);
 });
 
-test("compose returns the body's value, including a promise", async () => {
+test("`enterFrame` returns the body's value, including a promise", async () => {
   const framework = recordingFramework();
   const probe: Integration<{ n: number }> = {
     name: "probe",
@@ -1535,4 +1540,503 @@ test("a guarded `around` keeps teardown inner-first for wrapping integrations", 
     "inner:leave",
     "outer:leave",
   ]);
+});
+
+test("beforeEach then body then afterEach, outer describe then inner", () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { describe, it, beforeEach, afterEach } = initialize({ framework });
+
+  describe("outer", () => {
+    beforeEach(() => {
+      log.push("outer:before");
+    });
+    afterEach(() => {
+      log.push("outer:after");
+    });
+    describe("inner", () => {
+      beforeEach(() => {
+        log.push("inner:before");
+      });
+      afterEach(() => {
+        log.push("inner:after");
+      });
+      it("leaf", () => {
+        log.push("body");
+      });
+    });
+  });
+
+  invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual([
+    "outer:before",
+    "inner:before",
+    "body",
+    "inner:after",
+    "outer:after",
+  ]);
+});
+
+test("afterEach runs on a throwing body and the body's error is what propagates", () => {
+  const log: string[] = [];
+  const boom = new Error("body failed");
+  const framework = recordingFramework();
+  const { describe, it, afterEach } = initialize({ framework });
+
+  describe("suite", () => {
+    afterEach(() => {
+      log.push("after");
+    });
+    it("leaf", () => {
+      log.push("body");
+      throw boom;
+    });
+  });
+
+  try {
+    invoke(testsOf(framework)[0]!);
+    throw new Error("expected the body to throw");
+  } catch (error) {
+    expect(error).toBe(boom);
+  }
+
+  expect(log).toEqual(["body", "after"]);
+});
+
+test("afterEach runs when a beforeEach threw", () => {
+  const log: string[] = [];
+  const boom = new Error("before failed");
+  const framework = recordingFramework();
+  const { describe, it, beforeEach, afterEach } = initialize({ framework });
+
+  describe("suite", () => {
+    beforeEach(() => {
+      log.push("before");
+      throw boom;
+    });
+    afterEach(() => {
+      log.push("after");
+    });
+    it("leaf", () => {
+      log.push("body");
+    });
+  });
+
+  try {
+    invoke(testsOf(framework)[0]!);
+    throw new Error("expected beforeEach to throw");
+  } catch (error) {
+    expect(error).toBe(boom);
+  }
+
+  expect(log).toEqual(["before", "after"]);
+});
+
+test(".skip and .todo run no hooks", () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { describe, it, beforeEach, afterEach } = initialize({ framework });
+
+  describe("suite", () => {
+    beforeEach(() => {
+      log.push("before");
+    });
+    afterEach(() => {
+      log.push("after");
+    });
+    it.skip("skipped", () => {
+      log.push("skip-body");
+    });
+    it.todo("todo", () => {
+      log.push("todo-body");
+    });
+    it("live", () => {
+      log.push("body");
+    });
+  });
+
+  invoke(testsOf(framework).find((call) => call.name === "live")!);
+
+  expect(log).toEqual(["before", "body", "after"]);
+});
+
+test("two same-named describe blocks keep separate hook lists", () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { describe, it, beforeEach } = initialize({ framework });
+
+  describe("x", () => {
+    beforeEach(() => {
+      log.push("first");
+    });
+    it("a", () => {});
+  });
+  describe("x", () => {
+    beforeEach(() => {
+      log.push("second");
+    });
+    it("b", () => {});
+  });
+
+  invoke(testsOf(framework)[0]!);
+  expect(log).toEqual(["first"]);
+  log.length = 0;
+  invoke(testsOf(framework)[1]!);
+  expect(log).toEqual(["second"]);
+});
+
+test("two describe.each rows keep separate hook lists", () => {
+  const log: number[] = [];
+  const framework = recordingFramework();
+  const { describe } = initialize({ framework });
+
+  describe.each([1, 2])("suite", ({ it, beforeEach, row }) => {
+    beforeEach(() => {
+      log.push(row);
+    });
+    it("leaf", () => {});
+  });
+
+  invoke(testsOf(framework)[0]!);
+  expect(log).toEqual([1]);
+  invoke(testsOf(framework)[1]!);
+  expect(log).toEqual([1, 2]);
+});
+
+test("a beforeEach declared after an it in the same describe still applies", () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { describe, it, beforeEach } = initialize({ framework });
+
+  describe("suite", () => {
+    it("leaf", () => {
+      log.push("body");
+    });
+    beforeEach(() => {
+      log.push("before");
+    });
+  });
+
+  invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual(["before", "body"]);
+});
+
+test("an addressed async describe's beforeEach, taken off the scope, applies", async () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { describe } = initialize({ framework });
+
+  describe("suite", async ({ it, beforeEach }) => {
+    await Promise.resolve();
+    beforeEach(() => {
+      log.push("before");
+    });
+    it("leaf", () => {
+      log.push("body");
+    });
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual(["before", "body"]);
+});
+
+test("a top-level beforeEach throws AmbientHookError", () => {
+  const framework = recordingFramework();
+  const { beforeEach, afterEach } = initialize({ framework });
+
+  expect(() => beforeEach(() => {})).toThrow(HarnessError.AmbientHookError);
+  expect(() => afterEach(() => {})).toThrow(HarnessError.AmbientHookError);
+
+  try {
+    beforeEach(() => {});
+    throw new Error("expected AmbientHookError");
+  } catch (error) {
+    expect(error).toBeInstanceOf(HarnessError.AmbientHookError);
+    if (error instanceof HarnessError.AmbientHookError) {
+      expect(error.hook).toBe("beforeEach");
+    }
+  }
+});
+
+test("an ambient hook after an await in an addressed describe throws too", async () => {
+  const framework = recordingFramework();
+  const { describe, beforeEach } = initialize({ framework });
+
+  let caught: unknown;
+  describe("suite", async ({ it }) => {
+    await Promise.resolve();
+    /**
+     * The cursor was restored the moment this callback first returned, so the
+     * ambient hook has no suite to attach to — the same trap the ambient `it`
+     * has here, and the reason the scope carries all four hooks.
+     */
+    try {
+      beforeEach(() => {});
+    } catch (error) {
+      caught = error;
+    }
+    it("leaf", () => {});
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(caught).toBeInstanceOf(HarnessError.AmbientHookError);
+  expect(testsOf(framework)).toHaveLength(1);
+});
+
+test("beforeAll gets a suite identity, shared with afterAll in the same describe", () => {
+  const identities: Identity[] = [];
+  const framework = recordingFramework();
+  const { describe, beforeAll, afterAll } = initialize({
+    framework,
+    integrations: [tracing("probe", ["n"], [], identities)],
+  });
+
+  describe("suite", () => {
+    beforeAll(() => {});
+    afterAll(() => {});
+  });
+
+  const recorded = framework.calls.filter(
+    (call) => call.kind === "beforeAll" || call.kind === "afterAll",
+  );
+  expect(recorded[0]!.fn!.length).toBe(0);
+  invoke(recorded[0]!);
+  invoke(recorded[1]!);
+
+  expect(identities).toHaveLength(2);
+  expect(identities[0]).toEqual({
+    kind: "suite",
+    path: ["suite"],
+    name: "",
+    row: undefined,
+  });
+  expect(identities[1]).toEqual(identities[0]);
+});
+
+test("beforeAll receives its own context, not the test's", () => {
+  const framework = recordingFramework();
+  const probe: Integration<{ n: number }> = {
+    name: "probe",
+    provides: { n: () => 1 },
+  };
+  const { describe, it, beforeAll } = initialize({
+    framework,
+    integrations: [probe],
+  });
+
+  let allContext: object | undefined;
+  let testContext: object | undefined;
+  describe("suite", () => {
+    beforeAll((context) => {
+      allContext = context;
+    });
+    it("leaf", (context) => {
+      testContext = context;
+    });
+  });
+
+  invoke(framework.calls.find((call) => call.kind === "beforeAll")!);
+  invoke(testsOf(framework)[0]!);
+
+  expect(allContext).toEqual({ n: 1 });
+  expect(testContext).toEqual({ n: 1 });
+  expect(allContext).not.toBe(testContext);
+});
+
+test("integration setup runs before every user beforeEach, and its cleanup after every user afterEach", () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { describe, it, beforeEach, afterEach } = initialize({
+    framework,
+    integrations: [settingUp("probe", log)],
+  });
+
+  describe("suite", () => {
+    beforeEach(() => {
+      log.push("before");
+    });
+    afterEach(() => {
+      log.push("after");
+    });
+    it("leaf", () => {
+      log.push("body");
+    });
+  });
+
+  invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual([
+    "probe:setup",
+    "before",
+    "body",
+    "after",
+    "probe:cleanup",
+  ]);
+});
+
+test("context keys the library owns are non-writable, but the object is extensible", () => {
+  const framework = recordingFramework();
+  const probe: Integration<{ db: { n: number } }> = {
+    name: "probe",
+    provides: { db: () => ({ n: 1 }) },
+  };
+  const { describe } = initialize({ framework, integrations: [probe] });
+
+  let seen: Record<string, unknown> | undefined;
+  const thrown: string[] = [];
+
+  describe("suite", ({ it, beforeEach }) => {
+    beforeEach((context) => {
+      /** A key the library does not own — the hook-to-body scratchpad. */
+      (context as Record<string, unknown>).scratch = "from the hook";
+    });
+    it.each([{ n: 7 }])("row $n", (context) => {
+      const own = context as unknown as Record<string, unknown>;
+      for (const key of ["db", "row"]) {
+        try {
+          own[key] = "clobbered";
+        } catch (error) {
+          thrown.push(`${key}:${(error as Error).constructor.name}`);
+        }
+      }
+      /** Shallow: the integration's own value stays the integration's. */
+      (own.db as { n: number }).n = 99;
+      seen = own;
+    });
+  });
+
+  invoke(testsOf(framework)[0]!);
+
+  /** ESM is always strict, so a blocked assignment throws rather than no-ops. */
+  expect(thrown).toEqual(["db:TypeError", "row:TypeError"]);
+  expect(seen).toBeDefined();
+  expect((seen!.db as { n: number }).n).toBe(99);
+  expect(seen!.row).toEqual({ n: 7 });
+  expect(seen!.scratch).toBe("from the hook");
+  expect(Object.isExtensible(seen!)).toBe(true);
+});
+
+test("hooks receive the same context object identity as the body", () => {
+  const framework = recordingFramework();
+  const probe: Integration<{ n: number }> = {
+    name: "probe",
+    provides: { n: () => 1 },
+  };
+  const { describe, it, beforeEach, afterEach } = initialize({
+    framework,
+    integrations: [probe],
+  });
+
+  let beforeContext: object | undefined;
+  let afterContext: object | undefined;
+  let bodyContext: object | undefined;
+  describe("suite", () => {
+    beforeEach((context) => {
+      beforeContext = context;
+    });
+    afterEach((context) => {
+      afterContext = context;
+    });
+    it("leaf", (context) => {
+      bodyContext = context;
+    });
+  });
+
+  invoke(testsOf(framework)[0]!);
+
+  expect(beforeContext).toBe(bodyContext);
+  expect(afterContext).toBe(bodyContext);
+});
+
+test("context.row is visible to hooks in an .each test", () => {
+  const seen: unknown[] = [];
+  const framework = recordingFramework();
+  const { describe, it, beforeEach } = initialize({ framework });
+
+  describe("suite", () => {
+    beforeEach((context) => {
+      seen.push((context as { row: unknown }).row);
+    });
+    it.each([10, 20])("n %s", () => {});
+  });
+
+  invoke(testsOf(framework)[0]!);
+  invoke(testsOf(framework)[1]!);
+
+  expect(seen).toEqual([10, 20]);
+});
+
+test("an async beforeEach promotes a synchronous body, and the test settles after the hook", async () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { describe, it, beforeEach } = initialize({ framework });
+
+  describe("suite", () => {
+    beforeEach(async () => {
+      log.push("before:start");
+      await Promise.resolve();
+      log.push("before:end");
+    });
+    it("leaf", () => {
+      log.push("body");
+      return 7;
+    });
+  });
+
+  const result = invoke(testsOf(framework)[0]!);
+  expect(result).toBeInstanceOf(Promise);
+  expect(await result).toBe(7);
+  expect(log).toEqual(["before:start", "before:end", "body"]);
+});
+
+test("two invocations of one registered body each run their own hooks", () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { describe, it, beforeEach, afterEach } = initialize({ framework });
+
+  describe("suite", () => {
+    beforeEach(() => {
+      log.push("before");
+    });
+    afterEach(() => {
+      log.push("after");
+    });
+    it("leaf", () => {
+      log.push("body");
+    });
+  });
+
+  const recorded = testsOf(framework)[0]!;
+  invoke(recorded);
+  invoke(recorded);
+
+  expect(log).toEqual(["before", "body", "after", "before", "body", "after"]);
+});
+
+test("beforeAll and afterAll are absent when the framework declares neither", () => {
+  const framework = recordingFrameworkWithoutSuiteHooks();
+  const initialized = initialize({ framework });
+
+  expect("beforeAll" in initialized).toBe(false);
+  expect("afterAll" in initialized).toBe(false);
+  expect("beforeEach" in initialized).toBe(true);
+  expect("afterEach" in initialized).toBe(true);
+});
+
+test("beforeAll forwards trailing arguments to the runner", () => {
+  const framework = recordingFramework();
+  const { describe, beforeAll } = initialize({ framework });
+
+  describe("suite", () => {
+    beforeAll(() => {}, { timeout: 1000 });
+  });
+
+  const recorded = framework.calls.find((call) => call.kind === "beforeAll");
+  expect(recorded?.rest).toEqual([{ timeout: 1000 }]);
 });

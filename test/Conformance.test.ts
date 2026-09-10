@@ -104,7 +104,7 @@ describeCleanup("cleanup-order", () => {
 
 /**
  * A genuinely failing async test, registered through bun's `it.failing` so the
- * suite still passes. If compose swallowed the rejection, `.failing` would
+ * suite still passes. If `enterFrame` swallowed the rejection, `.failing` would
  * invert and fail this run; `afterAll` then confirms cleanup ran.
  */
 let asyncFailCleaned = false;
@@ -143,6 +143,51 @@ failingIt(
   },
 );
 
+/**
+ * Real bun: deferred nested-`describe` collection, a real `beforeEach` inside a
+ * real describe, a real `beforeAll` receiving a suite identity, and hook order
+ * across nesting — the stand-in can only imitate those.
+ */
+const hookLog: string[] = [];
+let suiteIdentity: Identity | undefined;
+
+const hookProbe: Integration<{ identity: Identity }> = {
+  name: "hook-probe",
+  provides: { identity: (identity) => identity },
+};
+
+const {
+  describe: describeHooks,
+  it: itHooks,
+  beforeEach,
+  afterEach,
+  beforeAll,
+} = initialize({ framework, integrations: [hookProbe] });
+
+describeHooks("hooks-outer", () => {
+  beforeAll(({ identity }) => {
+    suiteIdentity = identity;
+    hookLog.push("outer:beforeAll");
+  });
+  beforeEach(() => {
+    hookLog.push("outer:beforeEach");
+  });
+  afterEach(() => {
+    hookLog.push("outer:afterEach");
+  });
+  describeHooks("hooks-inner", () => {
+    beforeEach(() => {
+      hookLog.push("inner:beforeEach");
+    });
+    afterEach(() => {
+      hookLog.push("inner:afterEach");
+    });
+    itHooks("leaf", () => {
+      hookLog.push("body");
+    });
+  });
+});
+
 afterAll(() => {
   expect(seen.map((path) => path.join("/")).sort()).toEqual([
     "",
@@ -163,4 +208,18 @@ afterAll(() => {
     "outer:cleanup",
   ]);
   expect(asyncFailCleaned).toBe(true);
+  expect(suiteIdentity).toEqual({
+    kind: "suite",
+    path: ["hooks-outer"],
+    name: "",
+    row: undefined,
+  });
+  expect(hookLog).toEqual([
+    "outer:beforeAll",
+    "outer:beforeEach",
+    "inner:beforeEach",
+    "body",
+    "inner:afterEach",
+    "outer:afterEach",
+  ]);
 });

@@ -1,11 +1,21 @@
 import type { Framework } from "../Framework/Types";
 import type { AnyFn } from "../Utility/Types";
-import type { Decorator } from "./Types";
+import type { Decorator, Suite } from "./Types";
+
+/** Walk the parent links outward, then reverse: outer → inner. */
+export function pathOf(suite: Suite | undefined): string[] {
+  const names: string[] = [];
+  for (let node = suite; typeof node !== "undefined"; node = node.parent) {
+    names.push(node.name);
+  }
+  return names.reverse();
+}
 
 /**
- * Read a modifier off a native `describe`/`it`. bun throws on even _reading_
- * `.only`/`.skip` off `it.failing`, so a `typeof source.only` probe is not safe
- * — the access itself is the throw.
+ * Read a member off a native `describe`/`it` — a modifier — or off the
+ * framework module itself, which is how `beforeAll`/`afterAll` are found. bun
+ * throws on even _reading_ `.only`/`.skip` off `it.failing`, so probing the
+ * property with `typeof` is not safe — the access itself is the throw.
  */
 export function readNativeFn(source: object, key: string): AnyFn | undefined {
   try {

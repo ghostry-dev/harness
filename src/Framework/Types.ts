@@ -27,20 +27,25 @@ export type AnyFramework = {
   readonly describe: AnySource;
   readonly it: AnySource;
   readonly expect: AnyFn;
+  readonly beforeAll: AnyFn;
+  readonly afterAll: AnyFn;
 };
 
 /**
  * The slice of a test-framework module `initialize` wraps. Structural, not
  * imported from any runner — bun:test, vitest, and a recording stand-in all
- * satisfy this. Extra members (hooks, matchers) are ignored and remain
- * reachable on the returned `framework` escape hatch.
+ * satisfy this. Extra members (the runner's own `beforeEach`/`afterEach`,
+ * matchers) are ignored and remain reachable on the returned `framework` escape
+ * hatch.
  *
  * Native `it` bodies are `() => unknown`; the wrapped `TestSurface` is what
  * receives context. `describe`/`it`/`expect` may be methods; `initialize` binds
  * them so a destructure does not drop `this`.
  *
- * Only the members the wrapper actually calls appear here. A runner's own
- * `.each` and `.skipIf`/`.todoIf`/`.failingIf` are absent deliberately: `.each`
+ * Only the members the wrapper actually calls appear here. `beforeEach` /
+ * `afterEach` are absent deliberately: the wrapper never hands them to the
+ * runner, it dispatches them itself. A runner's own `.each` and
+ * `.skipIf`/`.todoIf`/`.failingIf` are absent for the same reason: `.each`
  * expands in this library rather than forwarding, and the `*If` forms choose
  * between the surfaces above, so declaring them would suggest a dependency the
  * wrapper does not have.
@@ -60,4 +65,6 @@ export type Framework = {
   };
   readonly test?: Framework["it"];
   readonly expect: AnyFn;
+  readonly beforeAll?: AnyFn;
+  readonly afterAll?: AnyFn;
 };
