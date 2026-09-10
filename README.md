@@ -127,6 +127,21 @@ The scope carries `describe`, `it`, `test`, and the four hooks bound to that sui
 
 Declaring the parameter is the opt in, and an `async` callback without one throws `AsyncDescribeError` naming the suite — it has no way to address its registrations, and would file them at a shallower path. Once addressed, the thenable goes to the runner and each collects it as it always does (bun, vitest and `node:test` await it; jest rejects an `async` describe; mocha discards the tests inside one).
 
+## Conformance
+
+A subpath export registers a suite that checks your runner behaves the way this library assumes, so compatibility is something your own environment can test rather than a list of runners that happened to work:
+
+```ts
+import { conformance } from "@ghostry/harness/conformance";
+import * as framework from "bun:test";
+
+conformance(framework);
+```
+
+Put it in a test file of its own. It builds its own `initialize` with its own probe integrations, registers everything under one `describe`, and waits only on microtasks, so it is safe with fake timers installed. It checks that a nested `describe` reaches the body as its full lexical path, that the runner finishes collecting a `describe` before running its tests, that hooks and integration cleanups run in order around the body, that no test starts before the previous one settles, and that `beforeAll`/`afterAll` bracket their suite when the runner declares them.
+
+Whether the runner awaits a promise a body returns is checked with a body that rejects, registered through `it.failing` (bun, jest) or `it.fails` (vitest) — the run stays green only if the rejection reached the runner as a failure. mocha and `node:test` have neither, and there the kit registers a skipped test saying so. It does not check an `async` describe, which runners legitimately disagree on, or where a synchronous failure is reported, which no test can observe from inside the run.
+
 ## License
 
 [MIT](LICENSE) © Patrick Rebsch

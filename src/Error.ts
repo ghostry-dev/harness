@@ -223,4 +223,39 @@ export namespace HarnessError {
         + `${JSON.stringify(suite)}, async ({ it }) => { … }).`;
     }
   }
+
+  /**
+   * A conformance check failed: the runner does not behave the way this library
+   * assumes it does. Thrown from inside a test the conformance kit registered,
+   * so the runner reports it as that test failing.
+   *
+   * The kit raises this rather than calling the runner's own `expect`, for two
+   * reasons. `Framework` types `expect` as `AnyFn` — all this package asks of
+   * it — so no matcher is reachable through that bound, and the matcher sets
+   * that do exist differ across runners in exactly the deep-equality corners a
+   * kit would lean on. A thrown error fails a test everywhere.
+   */
+  export class ConformanceError extends HarnessError {
+    constructor(
+      /**
+       * The guarantee that does not hold, phrased as the claim being checked.
+       */
+      public readonly check: string,
+      /**
+       * What this library requires, rendered for display.
+       */
+      public readonly expected: string,
+      /**
+       * What the runner did instead, rendered for display.
+       */
+      public readonly actual: string,
+    ) {
+      super();
+      this.name = "ConformanceError";
+      this.message =
+        `The runner does not satisfy: ${check}.\n`
+        + `  expected: ${expected}\n`
+        + `  actual:   ${actual}`;
+    }
+  }
 }

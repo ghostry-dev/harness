@@ -30,6 +30,11 @@
       "types": "./dist/types/index.d.ts",
       "import": "./dist/esm/index.js",
       "default": "./dist/esm/index.js"
+    },
+    "./conformance": {
+      "types": "./dist/types/Conformance/index.d.ts",
+      "import": "./dist/esm/Conformance/index.js",
+      "default": "./dist/esm/Conformance/index.js"
     }
   },
   "publishConfig": {

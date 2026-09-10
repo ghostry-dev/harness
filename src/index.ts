@@ -28,7 +28,8 @@ export { initialize } from "./Core";
  * integrations contributing the same context key; `PrototypePollutionError` is
  * a context key that would reach `Object.prototype`; `AmbientHookError` is a
  * top-level `beforeEach`/`afterEach`; `AsyncDescribeError` is a `describe`
- * callback that returned a thenable.
+ * callback that returned a thenable; `ConformanceError` is a guarantee the
+ * conformance kit found the runner does not keep.
  */
 export { HarnessError } from "./Error";
 

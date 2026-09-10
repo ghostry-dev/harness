@@ -1,57 +1,45 @@
 import { initialize, type Identity, type Integration } from "@ghostry/harness";
+import { conformance } from "@ghostry/harness/conformance";
 import * as framework from "bun:test";
 import { afterAll, expect } from "bun:test";
 
 /**
- * The rest of the suite drives the recording stand-in, which models a runner's
- * collection order rather than being one. This file drives the real `bun:test`,
- * whose nested `describe` callbacks run only after the enclosing callback has
- * returned — the case a registration-time push/pop stack gets wrong, silently,
- * by dropping every outer name from the path.
- *
- * Each body asserts its own identity, so a wrong path fails as that test rather
- * than as a summary at the end; `afterAll` then asserts that every body ran, so
- * a test that never registers cannot pass by absence.
+ * The shipped kit, against the real `bun:test` — so CI exercises the exact
+ * suite a consumer runs, and the kit cannot drift from what it claims.
  */
-const seen: string[][] = [];
+conformance(framework);
+
+/**
+ * What follows is what the kit deliberately leaves out, because it is a
+ * capability bun happens to have rather than something this library requires:
+ * bun awaits an addressed `async` describe, where jest rejects one and mocha
+ * silently drops its tests.
+ *
+ * Each body asserts its own identity, so a wrong path fails as that test;
+ * `afterAll` then asserts that every body ran, so a test that never registers
+ * cannot pass by absence.
+ */
+const seen: string[] = [];
 
 const probe: Integration<{ identity: Identity }> = {
   name: "probe",
-  provides: {
-    identity: (identity) => {
-      seen.push([...identity.path]);
-      return identity;
-    },
-  },
+  provides: { identity: (identity) => identity },
 };
 
 const { describe, it } = initialize({ framework, integrations: [probe] });
 
 function at(...path: string[]) {
   return ({ identity }: { identity: Identity }) => {
+    seen.push(identity.path.join("/"));
     expect(identity.path).toEqual(path);
   };
 }
 
-describe("outer", () => {
-  it("in outer", at("outer"));
-  describe("inner", () => {
-    it("in inner", at("outer", "inner"));
-    describe("deepest", () => {
-      it("in deepest", at("outer", "inner", "deepest"));
-    });
-  });
-  it("after inner", at("outer"));
-  describe("sibling", () => {
-    it("in sibling", at("outer", "sibling"));
-  });
-});
-
 /**
  * The addressed async form, against the runner that actually awaits it. The
  * timers are staggered so the two async suites resolve out of declaration order
- * — a scope reached by reference does not care, where the ambient cursor
- * would.
+ * — a scope reached by reference does not care, where the ambient cursor would.
+ * Real timers are safe here; nothing in this file installs fake ones.
  */
 describe("slow", async ({ it, describe }) => {
   await new Promise((resolve) => setTimeout(resolve, 30));
@@ -67,159 +55,12 @@ describe("fast", async ({ it }) => {
   it("in fast", at("fast"));
 });
 
+/**
+ * The kit registers everything under its own describe, so it never sees a test
+ * at the file's top level — an empty path.
+ */
 it("top level", at());
 
-/**
- * Cleanup ordering against bun's deferred nested-`describe` collection — the
- * stand-in can imitate the registration order, not the runner actually awaiting
- * settlement of a real test.
- */
-const cleanupLog: string[] = [];
-
-function sequenced(name: string): Integration<{}> {
-  return {
-    name,
-    provides: {},
-    setup() {
-      cleanupLog.push(`${name}:setup`);
-      return () => {
-        cleanupLog.push(`${name}:cleanup`);
-      };
-    },
-  };
-}
-
-const { describe: describeCleanup, it: itCleanup } = initialize({
-  framework,
-  integrations: [sequenced("outer"), sequenced("inner")],
-});
-
-describeCleanup("cleanup-order", () => {
-  describeCleanup("inner-suite", () => {
-    itCleanup("leaf", () => {
-      cleanupLog.push("body");
-    });
-  });
-});
-
-/**
- * A genuinely failing async test, registered through bun's `it.failing` so the
- * suite still passes. If `enterFrame` swallowed the rejection, `.failing` would
- * invert and fail this run; `afterAll` then confirms cleanup ran.
- */
-let asyncFailCleaned = false;
-
-const cleanupOnFail: Integration<{}> = {
-  name: "cleanup-on-fail",
-  provides: {},
-  setup() {
-    return () => {
-      asyncFailCleaned = true;
-    };
-  },
-};
-
-const { it: failingIt } = initialize({
-  framework: {
-    describe: framework.describe,
-    /**
-     * bun throws on even reading `.skip`/`.only` off `it.failing`, so the
-     * wrapper cannot be the modifier itself — `testable` probes those.
-     */
-    it: ((...args: never[]) =>
-      (framework.it.failing as (...args: never[]) => unknown)(
-        ...args,
-      )) as typeof framework.it,
-    expect: framework.expect,
-  },
-  integrations: [cleanupOnFail],
-});
-
-failingIt(
-  "a genuinely failing async test still reports as failed and runs its cleanup",
-  async () => {
-    await Promise.resolve();
-    throw new Error("conformance: expected async failure");
-  },
-);
-
-/**
- * Real bun: deferred nested-`describe` collection, a real `beforeEach` inside a
- * real describe, a real `beforeAll` receiving a suite identity, and hook order
- * across nesting — the stand-in can only imitate those.
- */
-const hookLog: string[] = [];
-let suiteIdentity: Identity | undefined;
-
-const hookProbe: Integration<{ identity: Identity }> = {
-  name: "hook-probe",
-  provides: { identity: (identity) => identity },
-};
-
-const {
-  describe: describeHooks,
-  it: itHooks,
-  beforeEach,
-  afterEach,
-  beforeAll,
-} = initialize({ framework, integrations: [hookProbe] });
-
-describeHooks("hooks-outer", () => {
-  beforeAll(({ identity }) => {
-    suiteIdentity = identity;
-    hookLog.push("outer:beforeAll");
-  });
-  beforeEach(() => {
-    hookLog.push("outer:beforeEach");
-  });
-  afterEach(() => {
-    hookLog.push("outer:afterEach");
-  });
-  describeHooks("hooks-inner", () => {
-    beforeEach(() => {
-      hookLog.push("inner:beforeEach");
-    });
-    afterEach(() => {
-      hookLog.push("inner:afterEach");
-    });
-    itHooks("leaf", () => {
-      hookLog.push("body");
-    });
-  });
-});
-
 afterAll(() => {
-  expect(seen.map((path) => path.join("/")).sort()).toEqual([
-    "",
-    "fast",
-    "outer",
-    "outer",
-    "outer/inner",
-    "outer/inner/deepest",
-    "outer/sibling",
-    "slow",
-    "slow/under slow",
-  ]);
-  expect(cleanupLog).toEqual([
-    "outer:setup",
-    "inner:setup",
-    "body",
-    "inner:cleanup",
-    "outer:cleanup",
-  ]);
-  expect(asyncFailCleaned).toBe(true);
-  expect(suiteIdentity).toEqual({
-    kind: "suite",
-    path: ["hooks-outer"],
-    name: "",
-    row: undefined,
-  });
-  expect(hookLog).toEqual([
-    "outer:beforeAll",
-    "outer:beforeEach",
-    "inner:beforeEach",
-    "body",
-    "inner:afterEach",
-    "outer:afterEach",
-  ]);
+  expect(seen.sort()).toEqual(["", "fast", "slow", "slow/under slow"]);
 });
