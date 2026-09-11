@@ -7,7 +7,7 @@ name: Build, Test, and Release
 on:
   push:
     branches:
-      - never #main
+      - main
 
 jobs:
   build:
