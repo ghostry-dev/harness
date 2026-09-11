@@ -7,6 +7,7 @@ import {
   type Outcome,
 } from "@ghostry/harness";
 import { expect, spyOn, test } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   invoke,
   recordingFramework,
@@ -1878,6 +1879,160 @@ test("integration setup runs before every user beforeEach, and its cleanup after
     "after",
     "probe:cleanup",
   ]);
+});
+
+test("afterEach runs inside every integration's `around`, like the body", () => {
+  const log: string[] = [];
+  const framework = recordingFramework();
+  const { describe, it, afterEach } = initialize({
+    framework,
+    integrations: [tracing("probe", [], log)],
+  });
+
+  describe("suite", () => {
+    afterEach(() => {
+      log.push("after");
+    });
+    it("leaf", () => {
+      log.push("body");
+    });
+  });
+
+  invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual(["probe:enter", "body", "after", "probe:leave"]);
+});
+
+/**
+ * The reason `afterEach` settles inside `enterBody`: a continuation runs in the
+ * async context active where it was chained, so an `afterEach` chained at the
+ * top of `enterFrame` would see none of the scope an `around` opened, though
+ * the body and every `beforeEach` did.
+ */
+test("an async afterEach sees the async context its integration's `around` opened", async () => {
+  const store = new AsyncLocalStorage<string>();
+  const scoping: Integration<{}> = {
+    name: "scoping",
+    provides: {},
+    around: (_identity, body) => store.run("scoped", body),
+  };
+  const seen: string[] = [];
+  const framework = recordingFramework();
+  const { describe, it, beforeEach, afterEach } = initialize({
+    framework,
+    integrations: [scoping],
+  });
+
+  describe("suite", () => {
+    beforeEach(async () => {
+      await Promise.resolve();
+      seen.push(`before:${store.getStore()}`);
+    });
+    afterEach(async () => {
+      await Promise.resolve();
+      seen.push(`after:${store.getStore()}`);
+    });
+    it("leaf", async () => {
+      await Promise.resolve();
+      seen.push(`body:${store.getStore()}`);
+    });
+  });
+
+  await invoke(testsOf(framework)[0]!);
+
+  expect(seen).toEqual(["before:scoped", "body:scoped", "after:scoped"]);
+});
+
+test("a failing afterEach reaches integration cleanups as the test's failure", () => {
+  const afterError = new Error("afterEach failed");
+  const outcomes: Outcome[] = [];
+  const framework = recordingFramework();
+  const { describe, it, afterEach } = initialize({
+    framework,
+    integrations: [
+      settingUp("probe", [], (outcome) => {
+        outcomes.push(outcome);
+      }),
+    ],
+  });
+
+  describe("suite", () => {
+    afterEach(() => {
+      throw afterError;
+    });
+    it("leaf", () => {});
+  });
+
+  const error = spyOn(console, "error");
+  error.mockImplementation(() => {});
+  try {
+    let thrown: unknown;
+    try {
+      invoke(testsOf(framework)[0]!);
+    } catch (caught) {
+      thrown = caught;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    if (thrown instanceof AggregateError) {
+      expect(thrown.errors).toEqual([afterError]);
+    }
+    expect(outcomes).toEqual([{ ok: false, error: thrown }]);
+    expect(error).toHaveBeenCalledTimes(1);
+  } finally {
+    error.mockRestore();
+  }
+});
+
+/**
+ * Two aggregates, not one: the `afterEach` aggregate is the test's failure by
+ * the time the integration cleanups settle, so theirs is logged but — the test
+ * having failed — not thrown.
+ */
+test("when afterEach and an integration cleanup both throw on a passing test, the afterEach aggregate propagates and the cleanup's is only logged", () => {
+  const afterError = new Error("afterEach failed");
+  const cleanupError = new Error("cleanup failed");
+  const framework = recordingFramework();
+  const { describe, it, afterEach } = initialize({
+    framework,
+    integrations: [
+      settingUp("probe", [], () => {
+        throw cleanupError;
+      }),
+    ],
+  });
+
+  describe("suite", () => {
+    afterEach(() => {
+      throw afterError;
+    });
+    it("leaf", () => {});
+  });
+
+  const error = spyOn(console, "error");
+  error.mockImplementation(() => {});
+  try {
+    let thrown: unknown;
+    try {
+      invoke(testsOf(framework)[0]!);
+    } catch (caught) {
+      thrown = caught;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    if (thrown instanceof AggregateError) {
+      expect(thrown.errors).toEqual([afterError]);
+    }
+    expect(error).toHaveBeenCalledTimes(2);
+    expect(error.mock.calls[0]![0]).toBe(thrown);
+    const logged = error.mock.calls[1]![0];
+    expect(logged).toBeInstanceOf(AggregateError);
+    if (logged instanceof AggregateError) {
+      expect(logged.errors).toEqual([cleanupError]);
+    }
+  } finally {
+    error.mockRestore();
+  }
 });
 
 test("context keys the library owns are non-writable, but the object is extensible", () => {

@@ -14,7 +14,7 @@ Each wrapped `it`/`test` body runs inside the composed frame: integrations apply
 
 ## `enterFrame` intercepts only when a cleanup can exist
 
-`enterFrame` short-circuits to an uninstrumented `enterIntegration(0)` when no integration declares `setup` **and** the invocation has no `afterEach` — no `try`/`catch`, no `settle`. That is a correctness choice, not an optimization. **bun reports a synchronously thrown test failure at its throw site**, so catching and rethrowing relocates the reported frame from the user's assertion line to inside `Frame.js`, and the failure's source excerpt becomes library internals. `error.stack` is byte-identical either way — this is the reporter following the throw, not a mutated error — so nothing but declining to catch will fix it.
+`enterFrame` short-circuits to an uninstrumented `enterIntegration(0)` when no integration declares `setup`, and `enterBody` likewise runs the `beforeEach` hooks and body uninstrumented when the invocation has no `afterEach` — no `try`/`catch`, no `settle`. That is a correctness choice, not an optimization. **bun reports a synchronously thrown test failure at its throw site**, so catching and rethrowing relocates the reported frame from the user's assertion line to inside `Frame.js`, and the failure's source excerpt becomes library internals. `error.stack` is byte-identical either way — this is the reporter following the throw, not a mutated error — so nothing but declining to catch will fix it.
 
 The guard covers every suite with no integrations, with provides-only integrations, or with `around`-only integrations, provided the test also registered no `afterEach`. The residual is inherent: a suite that does register a cleanup **must** be intercepted, and a synchronous failure there still reports inside this module. Rejections are unaffected in every configuration, intercepted or not — only the synchronous throw path relocates.
 
@@ -89,7 +89,7 @@ enterFrame(integrations, identity):
   integration setup, outer → inner
   beforeEach hooks, outer describe → inner
   body
-  afterEach hooks, inner → outer      (as cleanups)
+  afterEach hooks, inner → outer      (settled inside every around)
   integration cleanups, inner → outer
 ```
 
@@ -99,7 +99,7 @@ The registry is keyed by the node object, not by path: two `describe("x")` block
 
 Hook lists are gathered when the body runs, by walking the parent chain outward and reversing — not at registration — because a `beforeEach` written after an `it` in the same describe still applies to it in every real runner. Collection completes before any body runs, under both eager and deferred nesting. `.skip`/`.todo` need nothing extra: dispatch lives inside the body, and a body-less registration never gets a wrapper.
 
-`afterEach` is pushed as a `Cleanup` at the innermost frame, before any `beforeEach` runs. `runCleanups` is already inner-first and already awaits a thenable before the next, so pushing in outer→inner order runs them inner→outer; they are pushed last, so they run before every integration cleanup; and `finishCleanups` already logs always and rethrows only when the test passed, which is "the body's error wins and the hook's is attached." Pushing before the `before` hooks run also means `afterEach` runs when a `beforeEach` threw. The `Cleanup`'s `Outcome` is dropped: no runner hands one to a user hook.
+`afterEach` hooks become `Cleanup`s in a list of their own, built in `enterBody` before any `beforeEach` runs and settled **there**, inside every integration's `around` — not in the integration cleanup list settled at the top of `enterFrame`. A continuation runs in the async context active where it was chained, so an `afterEach` chained at the top would see none of the frames an `around` opened: an `AsyncLocalStorage` scope the body and every `beforeEach` saw would be gone for the `afterEach` alone, and a synchronous test's `afterEach` would run only after every `around` had returned. Settling in `enterBody` reuses the same machinery: `runCleanups` is already inner-first and already awaits a thenable before the next, so building in outer→inner order runs them inner→outer; and `finishCleanups` already logs always and rethrows only when the test passed, which is "the body's error wins and the hook's is attached." The `before` hooks run inside that interception, so `afterEach` runs when a `beforeEach` threw. The `afterEach` settlement finishes before the result reaches the integration cleanups, so every `afterEach` still runs before them, and a failing `afterEach` reaches them as the test's failure: a `setup` cleanup is handed `{ ok: false, error }` with the `afterEach` `AggregateError`, and a cleanup that also throws is logged in a second aggregate but not thrown. The `Cleanup`'s `Outcome` is dropped: no runner hands one to a user hook.
 
 `enterFrame` is the single writer of `row`, onto `collected` before the `before` hooks run, so hooks in an `.each` test see `context.row`.
 

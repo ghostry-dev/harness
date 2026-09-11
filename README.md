@@ -110,7 +110,7 @@ Costs that follow from dispatching `beforeEach`/`afterEach` inside the test:
 - A `beforeAll` registered after an `await` in an addressed `async` describe lands in the runner's _own_ current suite, which has moved on — the same hazard the wrapped `it` already shares. `beforeEach`/`afterEach` are immune: they never touch the runner.
 - Two suite identities at one path (a `beforeAll` and an `afterAll` in one `describe`) share an identity. That collision is intentional.
 
-A suite frame is per hook _call_, not per suite: an integration's `around`/`setup` on a `beforeAll` close when that hook returns, and do not wrap the suite's tests. Integrations wrap user hooks by construction (setup before every `beforeEach`, cleanup after every `afterEach`) and cannot interleave with them.
+A suite frame is per hook _call_, not per suite: an integration's `around`/`setup` on a `beforeAll` close when that hook returns, and do not wrap the suite's tests. Integrations wrap user hooks by construction (setup before every `beforeEach`, cleanup after every `afterEach`, and an `around` encloses both, so a scope it opens is live in `afterEach` as it is in the body) and cannot interleave with them.
 
 The escape hatch is the unwrapped module, so it does not maintain the path. A `framework.describe` around a wrapped `it` silently drops that name from the identity, and the tests inside draw the scope of the shallower path. Group with the wrapped `describe` and reach for `framework` only for the members it does not cover (the runner's own `beforeEach`/`afterEach`, runner-specific matchers).
 
