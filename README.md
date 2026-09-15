@@ -44,59 +44,45 @@ export const { describe, it, expect } = initializeHarness({
 });
 ```
 
-`@ghostry/harness` depends on neither fabricator nor the runner. Integrations satisfy `{ name, provides, setup?, around? }` structurally: `provides` is a map of context key to `(identity) => value` and is the only source of that integration's keys, so there is nothing to declare separately and nothing that could name a key the integration does not actually contribute. `setup`, if present, runs inside that integration's frame and returns a cleanup; the library sequences those cleanups inner-first on test settlement, so teardown is not the integration author's thenable-guard to get right. `around`, if present, wraps the write for cases `setup` cannot express and must return the body's value unchanged — its `finally` runs at the call boundary, which for an async body is when the promise is _returned_, not when the test finishes.
+`@ghostry/harness` depends on neither fabricator nor the runner. Integrations satisfy `{ name, provides, frame? }` structurally: `provides` is a map of context key to `(identity, established) => value` and is the only source of that integration's keys, so there is nothing to declare separately and nothing that could name a key the integration does not actually contribute.
 
-A transaction is the whole thing under `setup`:
-
-```ts
-setup() {
-  const tx = openTransaction();
-  current = tx;
-  return () => { current = undefined; tx.rollback(); };
-}
-```
-
-Written correctly under `around`, the same integration needs the guard, both arms, the synchronous-throw branch, a shared close path, and an `as $Return` cast:
+`frame` is the whole per-test lifecycle in one generator with one `yield`. Everything before it is setup, the body runs at it, everything after it is teardown:
 
 ```ts
-around<$Return>(_identity: Identity, body: () => $Return): $Return {
+*frame() {
   const tx = openTransaction();
-  current = tx;
-
-  // One close path, so it cannot drift between the three call sites.
-  const close = () => { current = undefined; tx.rollback(); };
-
-  let result: $Return;
   try {
-    result = body();
-  } catch (error) {
-    // The body threw synchronously and never returned a value.
-    close();
-    throw error;
+    yield;          // the test body runs here
+  } finally {
+    tx.rollback();  // runs when the body settles, sync or async
   }
-
-  // Guard: a synchronous body must stay synchronous. Promoting it to a
-  // promise would defer cleanup to a microtask and invert teardown order
-  // for any integration wrapping this one.
-  if (!isThenable(result)) {
-    close();
-    return result;
-  }
-
-  // Both arms: cleanup runs whether the test passes or fails, and the
-  // rejection must be re-thrown or the failure is swallowed.
-  return result.then(
-    (value) => { close(); return value; },
-    (error) => { close(); throw error; },
-  ) as $Return;
 }
 ```
+
+That `try`/`finally` means what it looks like, which a callback's could not. A callback returns at an async body's first `await`, so its `finally` fires in the middle of the test, and nothing you can call from inside it fixes that: a function call cannot suspend its caller, and the only two constructs that suspend a function are `await` (which would change what you return) and `yield` (which is `frame`'s approach).
+
+When the body must run **inside** something — an `AsyncLocalStorage` scope, a library's own `wrap`, a pooled connection's callback — yield a wrapper function. It receives the body, runs it wherever it needs to, and returns its value unchanged. Whatever it passes to `body` reaches your providers:
+
+```ts
+provides: { db: (_identity, tx) => tx },
+*frame(identity) {
+  try {
+    yield (body) => withConnection(identity, (tx) => body(tx));
+  } finally {
+    report(identity);
+  }
+}
+```
+
+Teardown runs inside that wrapper's scope, so an `AsyncLocalStorage` value it opened is still readable in the `finally`. Setup that needs to be inside goes inside the wrapper, since code before the `yield` runs before the wrapper has been applied.
+
+Yielding nothing is the common case. `async function*` works and promotes the test, and is required for teardown that must be awaited, since a synchronous generator resumes synchronously and has nowhere to wait. Teardown runs innermost-first across integrations, and an outer one waits for an inner asynchronous one, with no ordering logic on your side: each frame encloses the next, and that does the sequencing.
 
 Each test body receives a single `context` argument — every integration's contribution merged into one object. Those keys are read-only, and non-writable at runtime to match: the object is minted per test, so reassigning one accomplishes nothing. It is shallow (an integration's own value is yours to use as it intends) and the object stays extensible, so a `beforeEach` can leave keys of its own for the body. Identity is the test path (`describe` names → test name), not the file: two tests with the same path draw the same per-test scope even in different files. The path is built from links fixed when `describe` is called, not from a stack unwound as callbacks return, so it does not depend on _when_ a runner invokes a nested callback — jest, mocha and `node:test` invoke one inline, while bun and vitest defer it until the enclosing callback has returned.
 
 This currently wraps `describe`/`it`/`test`, their `.only`/`.skip`/`.todo`/`.failing`/`.concurrent` modifiers, `.skipIf`/`.todoIf`/`.failingIf`, `.each` (array and tagged-template), and hooks. The wrapped surface is derived from your framework's own declared type, so it offers a forwarded modifier only where the runner actually has one — `it.failing` is absent on vitest, which spells it `fails`, and `describe.todo` is absent on jest. `.each` is the exception: this library expands it rather than forwarding, so it is always available, including on runners with no native `.each` such as `node:test` and mocha. `.each` bodies receive `{ ...context, row }` — the row is a property, not a positional argument — and `identity.row` is that row's index. Give a `describe.each` title a placeholder from its row (`describe.each(rows)("case $name", …)`): a suite row reaches the identity only through the interpolated name, and the tests inside two identically-named rows would otherwise share one scope. Index tokens are 0-based (`$#`, `%#`), as in jest and vitest, with `%$` for the 1-based form.
 
-Hooks split on whether their identity needs per-test information. `beforeAll`/`afterAll` register with the framework and run inside the composed frame under a suite identity (`kind: "suite"`, `name: ""`) — they appear only when the runner declares them. `beforeEach`/`afterEach` do not register with the runner at all: they are collected onto the suite node and the wrapped `it` runs them inside the test's own frame, so they receive the same context object the body does and share its integration `setup`/`around`. That is also why they are always present, even on a runner with no native hooks.
+Hooks split on whether their identity needs per-test information. `beforeAll`/`afterAll` register with the framework and run inside the composed frame under a suite identity (`kind: "suite"`, `name: ""`) — they appear only when the runner declares them. `beforeEach`/`afterEach` do not register with the runner at all: they are collected onto the suite node and the wrapped `it` runs them inside the test's own frame, so they receive the same context object the body does and share its integration frames. That is also why they are always present, even on a runner with no native hooks.
 
 A `beforeEach`/`afterEach` with no suite in scope throws `AmbientHookError`. At the file's top level there is no suite to key it to, and with the recommended one-`initialize` shared module bun would otherwise run a file's top-level hook for every test in every file — put it inside a `describe`, or use `framework.beforeEach` through the escape hatch, accepting that a hook dispatched there gets no context. The same error covers an ambient hook called after an `await` in an addressed `describe`, where the cursor has already been restored; there the fix is the one `it` already needs, below — take the hook off the suite scope.
 
@@ -110,7 +96,7 @@ Costs that follow from dispatching `beforeEach`/`afterEach` inside the test:
 - A `beforeAll` registered after an `await` in an addressed `async` describe lands in the runner's _own_ current suite, which has moved on — the same hazard the wrapped `it` already shares. `beforeEach`/`afterEach` are immune: they never touch the runner.
 - Two suite identities at one path (a `beforeAll` and an `afterAll` in one `describe`) share an identity. That collision is intentional.
 
-A suite frame is per hook _call_, not per suite: an integration's `around`/`setup` on a `beforeAll` close when that hook returns, and do not wrap the suite's tests. Integrations wrap user hooks by construction (setup before every `beforeEach`, cleanup after every `afterEach`, and an `around` encloses both, so a scope it opens is live in `afterEach` as it is in the body) and cannot interleave with them.
+A suite frame is per hook _call_, not per suite: an integration's `frame` on a `beforeAll` closes when that hook returns, and does not wrap the suite's tests. Integrations wrap user hooks by construction (setup before every `beforeEach`, teardown after every `afterEach`, and a wrapper encloses both, so a scope it opens is live in `afterEach` as it is in the body) and cannot interleave with them.
 
 The escape hatch is the unwrapped module, so it does not maintain the path. A `framework.describe` around a wrapped `it` silently drops that name from the identity, and the tests inside draw the scope of the shallower path. Group with the wrapped `describe` and reach for `framework` only for the members it does not cover (the runner's own `beforeEach`/`afterEach`, runner-specific matchers).
 
@@ -138,7 +124,7 @@ import * as framework from "bun:test";
 conformance(framework);
 ```
 
-Put it in a test file of its own. It builds its own `initialize` with its own probe integrations, registers everything under one `describe`, and waits only on microtasks, so it is safe with fake timers installed. It checks that a nested `describe` reaches the body as its full lexical path, that the runner finishes collecting a `describe` before running its tests, that hooks and integration cleanups run in order around the body, that no test starts before the previous one settles, and that `beforeAll`/`afterAll` bracket their suite when the runner declares them.
+Put it in a test file of its own. It builds its own `initialize` with its own probe integrations, registers everything under one `describe`, and waits only on microtasks, so it is safe with fake timers installed. It checks that a nested `describe` reaches the body as its full lexical path, that the runner finishes collecting a `describe` before running its tests, that hooks and integration teardown run in order around the body, that no test starts before the previous one settles, and that `beforeAll`/`afterAll` bracket their suite when the runner declares them.
 
 Whether the runner awaits a promise a body returns is checked with a body that rejects, registered through `it.failing` (bun, jest) or `it.fails` (vitest) — the run stays green only if the rejection reached the runner as a failure. mocha and `node:test` have neither, and there the kit registers a skipped test saying so. It does not check an `async` describe, which runners legitimately disagree on, or where a synchronous failure is reported, which no test can observe from inside the run.
 

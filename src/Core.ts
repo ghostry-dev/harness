@@ -47,8 +47,8 @@ function assertKeys(integrations: ReadonlyArray<AnyIntegration>): void {
 
 /**
  * Wrap a test-framework module so every `it`/`test` body, and every wrapped
- * hook, runs inside the composed frame — each integration's `setup`/`around`,
- * its `provides` merged into the context — with an `Identity` derived from the
+ * hook, runs inside the composed frame — each integration's `frame`, its
+ * `provides` merged into the context — with an `Identity` derived from the
  * registration-time suite, never from a stack walk.
  *
  * The framework is a parameter, never an import: this package has zero runtime

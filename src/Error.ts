@@ -225,6 +225,101 @@ export namespace HarnessError {
   }
 
   /**
+   * An integration's `frame` returned something that is not a generator.
+   *
+   * Reported rather than ignored: ignoring it is indistinguishable from an
+   * integration with no frame at all, so the suite would pass, green, with
+   * neither the setup nor the teardown the author believed they had written.
+   *
+   * The shape this catches is a `frame` written as a wrapping callback, or as a
+   * plain function returning a cleanup.
+   */
+  export class IntegrationFrameResultError extends HarnessError {
+    constructor(
+      /**
+       * The integration whose `frame` returned it.
+       */
+      public readonly integration: string,
+
+      /**
+       * What came back instead, as `typeof` reports it.
+       */
+      public readonly received: string,
+    ) {
+      super();
+      this.name = "IntegrationFrameResultError";
+      this.message =
+        `The \`frame\` of integration ${JSON.stringify(integration)} returned `
+        + `${received} rather than a generator. Declare it as \`*frame()\` or `
+        + `\`async *frame()\`: setup before the \`yield\`, teardown after it.`;
+    }
+  }
+
+  /**
+   * An integration's `frame` yielded something that is not a wrapper.
+   *
+   * The `yield` carries one optional thing: a function that runs the body
+   * inside whatever this integration needs it to run inside. Yielding a _value_
+   * — the connection, the transaction, the scoped instance — is the mistake
+   * this catches, and it is `provides` that contributes values to the test
+   * context.
+   *
+   * Reported rather than ignored, since a silently discarded wrapper means the
+   * body never runs inside the scope the author opened, with nothing to say
+   * so.
+   */
+  export class IntegrationFrameWrapperError extends HarnessError {
+    constructor(
+      /**
+       * The integration whose `frame` yielded it.
+       */
+      public readonly integration: string,
+
+      /**
+       * What it yielded, as `typeof` reports it.
+       */
+      public readonly received: string,
+    ) {
+      super();
+      this.name = "IntegrationFrameWrapperError";
+      this.message =
+        `The \`frame\` of integration ${JSON.stringify(integration)} yielded `
+        + `${received}. Yield nothing, or a function that takes the body, runs `
+        + `it inside your scope, and returns its value unchanged. To contribute `
+        + `a value to the test context, use \`provides\`.`;
+    }
+  }
+
+  /**
+   * An integration's `frame` yielded more than once.
+   *
+   * There is exactly one suspension point: harness runs to the first `yield`,
+   * runs the body there, then resumes so the generator's own `finally` fires at
+   * settlement. A second `yield` asks for a second body, which has no meaning —
+   * there is only one — and nothing harness could do with it is what the author
+   * meant.
+   *
+   * Raised rather than ignored, because ignoring it would silently skip every
+   * statement past the second `yield`, teardown included, and report green.
+   */
+  export class IntegrationFrameYieldError extends HarnessError {
+    constructor(
+      /**
+       * The integration whose `frame` yielded twice.
+       */
+      public readonly integration: string,
+    ) {
+      super();
+      this.name = "IntegrationFrameYieldError";
+      this.message =
+        `The \`frame\` of integration ${JSON.stringify(integration)} yielded `
+        + `more than once. A frame has one suspension point: everything before `
+        + `the \`yield\` is setup, everything after it is teardown, and the `
+        + `body runs at the \`yield\`.`;
+    }
+  }
+
+  /**
    * A conformance check failed: the runner does not behave the way this library
    * assumes it does. Thrown from inside a test the conformance kit registered,
    * so the runner reports it as that test failing.

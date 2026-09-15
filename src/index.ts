@@ -14,12 +14,12 @@
 
 /**
  * Wrap a test-framework module so every `it`/`test` body, and every wrapped
- * hook, runs inside the composed frame — each integration's `setup`/`around`,
- * with its `provides` merged into the context regardless. Returns `{ describe,
- * it, test, expect, beforeEach, afterEach, framework }`, plus
- * `beforeAll`/`afterAll` when the runner declares them — `it` and `test` are
- * one implementation under two names, `expect` is bound so a destructure does
- * not drop `this`, and `framework` is the unchanged module.
+ * hook, runs inside the composed frame — each integration's `frame`, with its
+ * `provides` merged into the context regardless. Returns `{ describe, it, test,
+ * expect, beforeEach, afterEach, framework }`, plus `beforeAll`/`afterAll` when
+ * the runner declares them — `it` and `test` are one implementation under two
+ * names, `expect` is bound so a destructure does not drop `this`, and
+ * `framework` is the unchanged module.
  */
 export { initialize } from "./Core";
 
@@ -36,22 +36,23 @@ export { HarnessError } from "./Error";
 /**
  * The integration contract, and the two types that join it to the framework
  * side. `Identity` is what identifies one registered test or suite;
- * `Integration` is the `{ name, provides, setup?, around? }` shape `initialize`
- * invokes — `provides` is a `Provides<$Context>`, one `Provider` per context
- * key; `Cleanup` is what `setup` returns and `Outcome` is what that cleanup
- * receives; `TestContext` is the merged first parameter of a wrapped body.
+ * `Integration` is the `{ name, provides, frame? }` shape `initialize` invokes
+ * — `provides` is a `Provides<$Context, $Established>`, one `Provider` per
+ * context key; `Frame` is the generator `frame` returns and `Wrapper` is the
+ * optional thing it yields; `TestContext` is the merged first parameter of a
+ * wrapped body.
  */
 export type {
   AnyIntegration,
-  Cleanup,
+  Frame,
   Identity,
   InitializeOptions,
   Initialized,
   Integration,
-  Outcome,
   Provider,
   Provides,
   TestContext,
+  Wrapper,
 } from "./Types";
 
 /**

@@ -1,10 +1,10 @@
 import * as bun from "bun:test";
 import {
   initialize,
-  type Cleanup,
+  type Frame,
   type Identity,
   type Integration,
-  type Outcome,
+  type Wrapper,
 } from "@ghostry/harness";
 import {
   recordingFramework,
@@ -24,7 +24,9 @@ type Expect<_ extends true> = true;
 const left: Integration<{ left: number }> = {
   name: "left",
   provides: { left: () => 1 },
-  setup: () => () => {},
+  *frame() {
+    yield;
+  },
 };
 const right: Integration<{ right: string }> = {
   name: "right",
@@ -189,13 +191,24 @@ export type Assertions = [
       }
     >
   >,
+  /**
+   * The lifecycle is one hook. `Frame` is what it returns, and `Wrapper` is the
+   * optional thing it yields — a function that runs the body inside whatever
+   * the integration needs, and returns its value unchanged.
+   */
   Expect<
     Equal<
-      Outcome,
-      { readonly ok: true } | { readonly ok: false; readonly error: unknown }
+      Frame<void>,
+      | Generator<Wrapper<void> | void, void, unknown>
+      | AsyncGenerator<Wrapper<void> | void, void, unknown>
     >
   >,
-  Expect<Equal<Cleanup, (outcome: Outcome) => void | PromiseLike<void>>>,
+  Expect<
+    Equal<
+      Integration<{ n: number }>["frame"],
+      ((identity: Identity) => Frame<void>) | undefined
+    >
+  >,
   /**
    * Two integrations merge by intersection into the body's first parameter,
    * `Readonly` — `enterFrame` writes those keys non-writable, and the type says

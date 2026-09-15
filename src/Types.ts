@@ -44,8 +44,16 @@ export type Identity = {
  * One context key's value, as a function of the test's `Identity` rather than a
  * fixed value — the per-test scope (a seed, a temp directory) is usually
  * derived from the path, not constant.
+ *
+ * `established` is whatever this integration's own wrapper handed forward, so a
+ * provided value can simply _be_ the thing that wrapper opened. Without it the
+ * only route from the wrapper to a provider is a mutable variable closed over
+ * by both, written on the way in and read on the way out.
  */
-export type Provider<$Value> = (identity: Identity) => $Value;
+export type Provider<$Value, $Established = void> = (
+  identity: Identity,
+  established: $Established,
+) => $Value;
 
 /**
  * The keys an integration contributes, and how each is produced. Homomorphic
@@ -53,24 +61,67 @@ export type Provider<$Value> = (identity: Identity) => $Value;
  * back out of a `provides` object shape with no separate declaration to keep in
  * sync.
  */
-export type Provides<$Context extends object> = {
-  readonly [$Key in keyof $Context]: Provider<$Context[$Key]>;
+export type Provides<$Context extends object, $Established = void> = {
+  readonly [$Key in keyof $Context]: Provider<$Context[$Key], $Established>;
 };
 
 /**
- * Whether the test body settled successfully. Handed to each `setup` cleanup so
- * teardown can observe pass/fail the way a correctly-written `around` would
- * have — without the thenable-guard that writing `around` requires.
+ * Whether the test body settled successfully.
+ *
+ * Internal to this package now that {@link Integration.frame} is a generator: an
+ * author observes failure with a `try`/`catch` around the `yield`, which is the
+ * same information in the shape the language already has for it.
  */
 export type Outcome =
   | { readonly ok: true }
   | { readonly ok: false; readonly error: unknown };
 
 /**
- * Teardown returned by `setup`. May be async; a thenable is awaited before the
- * next cleanup (inner-first) and before the test completes.
+ * Internal teardown: what `afterEach` settlement uses, and the normalized form
+ * a {@link Frame}'s resumption is adapted into. May be async; a thenable is
+ * awaited before the next cleanup (inner-first) and before the test completes.
  */
 export type Cleanup = (outcome: Outcome) => void | PromiseLike<void>;
+
+/**
+ * How an integration runs the body when it needs the body to run _inside_
+ * something — an `AsyncLocalStorage` scope, a library's own `wrap`, a pooled
+ * connection's callback. Yielded from {@link Integration.frame}; harness
+ * applies it, passing a `body` that must be called exactly once and whose value
+ * must be returned unchanged.
+ *
+ * `body` takes the value this wrapper established, which is how a scoped thing
+ * reaches the providers without a mutable variable in between.
+ *
+ * Yielding nothing is the common case: an integration with no wrapping to do
+ * just brackets the body.
+ */
+export type Wrapper<$Established = void> = <$Return>(
+  body: (established: $Established) => $Return,
+) => $Return;
+
+/**
+ * What {@link Integration.frame} returns: a generator with **one** suspension
+ * point.
+ *
+ * Everything before the `yield` is setup. The `yield` is where the body runs,
+ * and what it yields is an optional {@link Wrapper}. Everything after it is
+ * teardown, resumed when the body _settles_ rather than when any call returns —
+ * so a `try`/`finally` here means what it looks like, and a `try`/`catch` sees
+ * a failing body.
+ *
+ * That is the shape a `try`/`finally` around a callback could never have. A
+ * callback returns at an async body's first `await`, and nothing called from
+ * inside it can suspend it, because only `await` and `yield` suspend a function
+ * and `await` would change what the callback returns. `yield` is the one
+ * construct that can be both the wrapping point and the waiting point.
+ *
+ * `async function*` works, and promotes the test exactly as any other awaited
+ * setup would.
+ */
+export type Frame<$Established = void> =
+  | Generator<Wrapper<$Established> | void, void, unknown>
+  | AsyncGenerator<Wrapper<$Established> | void, void, unknown>;
 
 /**
  * What `initialize` invokes per test or hook. `provides` is the _only_ source
@@ -78,28 +129,23 @@ export type Cleanup = (outcome: Outcome) => void | PromiseLike<void>;
  * does not actually produce, which is what let a mismatched `keys` array go
  * unnoticed under the previous `{ keys, run }` shape.
  *
- * `setup` is the common teardown hook: it runs inside this integration's
- * `around` frame (if any) and before its providers, and the cleanup it returns
- * runs on test settlement, inner-first across integrations. Both `setup` and
- * the cleanup may be async; awaiting either promotes the test to a promise.
+ * `frame` is the whole per-test lifecycle in one hook: setup, the body, and
+ * teardown, as one generator with a single `yield`. See {@link Frame}.
  *
- * `around` wraps the body and contributes nothing to the context. Its `finally`
- * runs at the _call_ boundary, which for an async body is when the promise is
- * returned, not when the test finishes — teardown that must pair with
- * completion belongs in `setup`. `around` is generic in its return, which it
- * must return unchanged; returning a promise for a synchronous body defers that
- * frame's teardown to a microtask and inverts order for any integration
- * wrapping this one.
+ * One hook rather than a wrapping callback beside a teardown hook: a callback
+ * returns at an async body's first `await`, so a `try`/`finally` in it fires
+ * mid-test, and nothing called from inside it can suspend it. A generator that
+ * yields a {@link Wrapper} does both jobs, because `yield` is at once the point
+ * where the body runs and the point where this hook waits.
  *
- * Each provider in `provides` runs _inside_ the integration's own `around`
- * frame and after its `setup`, so a value can depend on state that either just
- * established.
+ * Each provider in `provides` runs _inside_ that frame and after its setup, and
+ * receives the same `$Established` the wrapper handed to `body`, so a provided
+ * value can be the thing the frame just opened.
  */
-export type Integration<$Context extends object> = {
+export type Integration<$Context extends object, $Established = void> = {
   readonly name: string;
-  readonly provides: Provides<$Context>;
-  setup?(identity: Identity): Cleanup | void | PromiseLike<Cleanup | void>;
-  around?<$Return>(identity: Identity, body: () => $Return): $Return;
+  readonly provides: Provides<$Context, $Established>;
+  frame?(identity: Identity): Frame<$Established>;
 };
 
 /**
@@ -108,10 +154,10 @@ export type Integration<$Context extends object> = {
  * `Record<string, unknown>` makes `provides` an index signature, which every
  * `Provides<$Context>` is assignable to.
  */
-export type AnyIntegration = Integration<Record<string, unknown>>;
+export type AnyIntegration = Integration<Record<string, unknown>, any>;
 
 type ContextOf<$Integration> =
-  $Integration extends Integration<infer $Context> ? $Context : never;
+  $Integration extends Integration<infer $Context, any> ? $Context : never;
 
 /**
  * The single first parameter of a wrapped `it`/`test` body — every

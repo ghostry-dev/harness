@@ -1,10 +1,9 @@
 import {
-  initialize,
   HarnessError,
+  initialize,
   type AnyFn,
   type Identity,
   type Integration,
-  type Outcome,
 } from "@ghostry/harness";
 import { expect, spyOn, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -14,6 +13,15 @@ import {
   recordingFrameworkWithoutSuiteHooks,
   testsOf,
 } from "./fixtures/framework";
+
+/**
+ * `Outcome` is internal to the library now that a frame reports failure by
+ * throwing into the `yield`. The fixtures below still find the shape convenient
+ * for expressing what they assert.
+ */
+type Outcome =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: unknown };
 
 function tracing(
   name: string,
@@ -27,12 +35,14 @@ function tracing(
   return {
     name,
     provides,
-    around(identity, body) {
+    *frame(identity) {
       identities.push(identity);
       log.push(`${name}:enter`);
-      const result = body();
-      log.push(`${name}:leave`);
-      return result;
+      try {
+        yield;
+      } finally {
+        log.push(`${name}:leave`);
+      }
     },
   };
 }
@@ -90,21 +100,21 @@ test("each integration's context merges into one object handed to the body", () 
 });
 
 /**
- * A provider runs _inside_ its own integration's `around` frame — after that
- * frame has opened, before the next integration's — so a value can depend on
- * state the frame already established (an open transaction, a seeded clock),
- * not just on `identity`.
+ * A provider runs _inside_ its own integration's frame — after that frame has
+ * opened, before the next integration's — so a value can depend on state the
+ * frame already established (an open transaction, a seeded clock), not just on
+ * `identity`.
  */
-test("a provider sees state its own integration's `around` already established", () => {
+test("a provider sees state its own integration's frame already established", () => {
   const framework = recordingFramework();
   let transactionOpen = false;
   const db: Integration<{ rows: number }> = {
     name: "db",
     provides: { rows: () => (transactionOpen ? 1 : -1) },
-    around(_identity, body) {
+    *frame() {
       transactionOpen = true;
       try {
-        return body();
+        yield;
       } finally {
         transactionOpen = false;
       }
@@ -1039,17 +1049,50 @@ function settingUp(
   log: string[],
   cleanup?: (outcome: Outcome) => void | PromiseLike<void>,
 ): Integration<{}> {
+  const teardown =
+    cleanup
+    ?? (() => {
+      log.push(`${name}:cleanup`);
+    });
+
   return {
     name,
     provides: {},
-    setup() {
+    *frame() {
       log.push(`${name}:setup`);
-      return (
-        cleanup
-        ?? (() => {
-          log.push(`${name}:cleanup`);
-        })
-      );
+      try {
+        yield;
+      } catch (error) {
+        void teardown({ ok: false, error });
+        throw error;
+      }
+      void teardown({ ok: true });
+    },
+  };
+}
+
+/**
+ * The same, as an `async function*`. Teardown that must be awaited needs one: a
+ * synchronous generator resumes synchronously, so there is nowhere for it to
+ * wait.
+ */
+function settingUpAsync(
+  name: string,
+  log: string[],
+  cleanup: (outcome: Outcome) => void | PromiseLike<void>,
+): Integration<{}> {
+  return {
+    name,
+    provides: {},
+    async *frame() {
+      log.push(`${name}:setup`);
+      try {
+        yield;
+      } catch (error) {
+        await cleanup({ ok: false, error });
+        throw error;
+      }
+      await cleanup({ ok: true });
     },
   };
 }
@@ -1091,8 +1134,14 @@ test("cleanup receives `{ ok: true }` on pass and `{ ok: false, error }` on fail
   const observe: Integration<{}> = {
     name: "observe",
     provides: {},
-    setup: () => (outcome) => {
-      (outcome.ok ? passed : failed).push(outcome);
+    *frame() {
+      try {
+        yield;
+      } catch (error) {
+        failed.push({ ok: false, error });
+        throw error;
+      }
+      passed.push({ ok: true });
     },
   };
   const { it } = initialize({ framework, integrations: [observe] });
@@ -1134,12 +1183,12 @@ test("a synchronous body with async cleanup is promoted to a promise", async () 
   const { it } = initialize({
     framework,
     integrations: [
-      settingUp("outer", log, async () => {
+      settingUpAsync("outer", log, async () => {
         log.push("outer:cleanup:start");
         await Promise.resolve();
         log.push("outer:cleanup:end");
       }),
-      settingUp("inner", log, async () => {
+      settingUpAsync("inner", log, async () => {
         log.push("inner:cleanup:start");
         await Promise.resolve();
         log.push("inner:cleanup:end");
@@ -1166,7 +1215,7 @@ test("a synchronous body with async cleanup is promoted to a promise", async () 
   ]);
 });
 
-test("an async setup completes before that integration's providers run", async () => {
+test("an async frame's setup completes before that integration's providers run", async () => {
   const log: string[] = [];
   const framework = recordingFramework();
   const probe: Integration<{ n: number }> = {
@@ -1177,10 +1226,11 @@ test("an async setup completes before that integration's providers run", async (
         return 1;
       },
     },
-    async setup() {
+    async *frame() {
       log.push("setup:start");
       await Promise.resolve();
       log.push("setup:end");
+      yield;
     },
   };
   const { it } = initialize({ framework, integrations: [probe] });
@@ -1196,28 +1246,29 @@ test("an async setup completes before that integration's providers run", async (
 });
 
 /**
- * An `async` setup registers its cleanup only after the descent has already
- * returned its promise, so anything reading `cleanups.length` before settlement
- * sees an empty array. Asserted in both orderings because a synchronous
- * integration placed outside masks the bug entirely: it registers before the
- * first await, so the array is non-empty at the moment the descent returns and
- * the cleanup chain gets attached after all.
+ * An `async function*` frame does not reach its `yield` until the first
+ * `next()` settles, so nothing inner may run before then. Asserted in both
+ * orderings because a synchronous integration placed outside can mask a mistake
+ * here: it opens before the first await, so a descent that wrongly proceeded
+ * early would still look ordered from outside.
  */
 function asyncSettingUp(name: string, log: string[]): Integration<{}> {
   return {
     name,
     provides: {},
-    async setup() {
+    async *frame() {
       await Promise.resolve();
       log.push(`${name}:setup`);
-      return () => {
+      try {
+        yield;
+      } finally {
         log.push(`${name}:cleanup`);
-      };
+      }
     },
   };
 }
 
-test("an async setup's cleanup runs when it is the outermost integration", async () => {
+test("an async frame's teardown runs when it is the outermost integration", async () => {
   const log: string[] = [];
   const framework = recordingFramework();
   const { it } = initialize({
@@ -1240,7 +1291,7 @@ test("an async setup's cleanup runs when it is the outermost integration", async
   ]);
 });
 
-test("an async setup's cleanup runs when a synchronous integration wraps it", async () => {
+test("an async frame's teardown runs when a synchronous integration wraps it", async () => {
   const log: string[] = [];
   const framework = recordingFramework();
   const { it } = initialize({
@@ -1263,7 +1314,7 @@ test("an async setup's cleanup runs when a synchronous integration wraps it", as
   ]);
 });
 
-test("an async setup's cleanup still runs when the body throws", async () => {
+test("an async frame's teardown still runs when the body throws", async () => {
   const log: string[] = [];
   const failure = new Error("body failed");
   const framework = recordingFramework();
@@ -1337,8 +1388,12 @@ test("cleanup errors are collected into an AggregateError, logged, and thrown on
   const probe: Integration<{}> = {
     name: "probe",
     provides: {},
-    setup: () => () => {
-      throw cleanupError;
+    *frame() {
+      try {
+        yield;
+      } finally {
+        throw cleanupError;
+      }
     },
   };
   const framework = recordingFramework();
@@ -1369,8 +1424,12 @@ test("a failing test's error propagates unmodified even when cleanup also throws
   const probe: Integration<{}> = {
     name: "probe",
     provides: {},
-    setup: () => () => {
-      throw cleanupError;
+    *frame() {
+      try {
+        yield;
+      } finally {
+        throw cleanupError;
+      }
     },
   };
   const framework = recordingFramework();
@@ -1398,7 +1457,90 @@ test("a failing test's error propagates unmodified even when cleanup also throws
   }
 });
 
-test("setup runs inside its own around frame, before that integration's providers", () => {
+/**
+ * An `async function*` reports an uncaught `yield` by _rejecting_ rather than
+ * by raising, so a synchronous `try`/`catch` around `frame.throw()` never sees
+ * it. Without the rejection path guarded too, the body's own error came back
+ * out of the frame, failed the identity check by never reaching it, and was
+ * recorded as a cleanup failure — every failing test under the commonest async
+ * frame shape logged a teardown fault that had not happened.
+ */
+test("an async frame that does not catch passes the body's error through, silently", async () => {
+  const boom = new Error("body failed");
+  const log: string[] = [];
+  const probe: Integration<{}> = {
+    name: "probe",
+    provides: {},
+    async *frame() {
+      try {
+        yield;
+      } finally {
+        log.push("teardown");
+      }
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [probe] });
+
+  it("leaf", () => {
+    throw boom;
+  });
+
+  const error = spyOn(console, "error");
+  error.mockImplementation(() => {});
+  try {
+    await invoke(testsOf(framework)[0]!);
+    throw new Error("expected the body error");
+  } catch (thrown) {
+    expect(thrown).toBe(boom);
+    expect(error).not.toHaveBeenCalled();
+    expect(log).toEqual(["teardown"]);
+  } finally {
+    error.mockRestore();
+  }
+});
+
+/** The other half: a _different_ error out of an async frame is still a fault. */
+test("an async frame's own teardown error is still recorded when the body fails", async () => {
+  const boom = new Error("body failed");
+  const cleanupError = new Error("cleanup failed");
+  const probe: Integration<{}> = {
+    name: "probe",
+    provides: {},
+    async *frame() {
+      try {
+        yield;
+      } finally {
+        throw cleanupError;
+      }
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [probe] });
+
+  it("leaf", () => {
+    throw boom;
+  });
+
+  const error = spyOn(console, "error");
+  error.mockImplementation(() => {});
+  try {
+    await invoke(testsOf(framework)[0]!);
+    throw new Error("expected the body error");
+  } catch (thrown) {
+    expect(thrown).toBe(boom);
+    expect(error).toHaveBeenCalledTimes(1);
+    const logged = error.mock.calls[0]![0];
+    expect(logged).toBeInstanceOf(AggregateError);
+    if (logged instanceof AggregateError) {
+      expect(logged.errors).toEqual([cleanupError]);
+    }
+  } finally {
+    error.mockRestore();
+  }
+});
+
+test("a frame opens before its own providers and closes after the body", () => {
   const log: string[] = [];
   const probe: Integration<{ n: number }> = {
     name: "probe",
@@ -1408,17 +1550,13 @@ test("setup runs inside its own around frame, before that integration's provider
         return 1;
       },
     },
-    setup() {
-      log.push("setup");
-      return () => {
-        log.push("cleanup");
-      };
-    },
-    around(_identity, body) {
-      log.push("around:enter");
-      const result = body();
-      log.push("around:leave");
-      return result;
+    *frame() {
+      log.push("open");
+      try {
+        yield;
+      } finally {
+        log.push("close");
+      }
     },
   };
   const framework = recordingFramework();
@@ -1430,31 +1568,28 @@ test("setup runs inside its own around frame, before that integration's provider
 
   invoke(testsOf(framework)[0]!);
 
-  expect(log).toEqual([
-    "around:enter",
-    "setup",
-    "provide",
-    "body",
-    "around:leave",
-    "cleanup",
-  ]);
+  expect(log).toEqual(["open", "provide", "body", "close"]);
 });
 
 /**
- * Bare chaining — `return Promise.resolve(body()).then(...)` with no thenable
- * guard — promotes a synchronous body. An outer `around` whose `finally` runs
- * at the call boundary then tears down _before_ the inner frame's deferred
- * close, inverting order.
+ * A wrapper that chains unconditionally still promotes a synchronous body —
+ * that is inherent, and its own author's doing. What it can no longer do is
+ * invert teardown, because a frame's teardown is never at a call boundary: it
+ * settles against the body, wherever the wrapper put it.
+ *
+ * A wrapping callback whose `finally` fires at the call boundary would tear
+ * down _before_ an inner frame's deferred close, inverting the order. A frame
+ * cannot, because its teardown is never at a call boundary.
  */
-test("a bare `around` that always chains inverts teardown order for wrapping integrations", async () => {
+test("a wrapper that promotes a synchronous body still tears down inner-first", async () => {
   const log: string[] = [];
   const outer: Integration<{}> = {
     name: "outer",
     provides: {},
-    around(_identity, body) {
+    *frame() {
       log.push("outer:enter");
       try {
-        return body();
+        yield;
       } finally {
         log.push("outer:leave");
       }
@@ -1463,12 +1598,15 @@ test("a bare `around` that always chains inverts teardown order for wrapping int
   const inner: Integration<{}> = {
     name: "inner",
     provides: {},
-    around<_Return>(_identity: Identity, body: () => _Return): _Return {
+    *frame() {
       log.push("inner:enter");
-      return Promise.resolve(body()).then((value) => {
+      try {
+        /** Deliberately unguarded: chains whether or not the body is async. */
+        yield (<$Return>(body: () => $Return) =>
+          Promise.resolve(body()) as $Return) as never;
+      } finally {
         log.push("inner:leave");
-        return value;
-      }) as _Return;
+      }
     },
   };
   const framework = recordingFramework();
@@ -1481,66 +1619,41 @@ test("a bare `around` that always chains inverts teardown order for wrapping int
   const result = invoke(testsOf(framework)[0]!);
   expect(result).toBeInstanceOf(Promise);
   await result;
+
   expect(log).toEqual([
     "outer:enter",
     "inner:enter",
     "body",
-    "outer:leave",
     "inner:leave",
+    "outer:leave",
   ]);
 });
 
-test("a guarded `around` keeps teardown inner-first for wrapping integrations", () => {
+test("a wrapper that returns the body's value unchanged keeps a sync body sync", () => {
   const log: string[] = [];
-  const outer: Integration<{}> = {
-    name: "outer",
+  const wrapping: Integration<{}> = {
+    name: "wrapping",
     provides: {},
-    around(_identity, body) {
-      log.push("outer:enter");
+    *frame() {
       try {
-        return body();
+        yield (body) => body(undefined);
       } finally {
-        log.push("outer:leave");
+        log.push("close");
       }
-    },
-  };
-  const inner: Integration<{}> = {
-    name: "inner",
-    provides: {},
-    around<_Return>(_identity: Identity, body: () => _Return): _Return {
-      log.push("inner:enter");
-      const result = body();
-      if (
-        typeof result !== "object"
-        || result === null
-        || typeof (result as unknown as PromiseLike<unknown>).then
-          !== "function"
-      ) {
-        log.push("inner:leave");
-        return result;
-      }
-      return (result as unknown as PromiseLike<unknown>).then((value) => {
-        log.push("inner:leave");
-        return value;
-      }) as _Return;
     },
   };
   const framework = recordingFramework();
-  const { it } = initialize({ framework, integrations: [outer, inner] });
+  const { it } = initialize({ framework, integrations: [wrapping] });
 
   it("leaf", () => {
     log.push("body");
+    return 7;
   });
 
   const result = invoke(testsOf(framework)[0]!);
   expect(result).not.toBeInstanceOf(Promise);
-  expect(log).toEqual([
-    "outer:enter",
-    "inner:enter",
-    "body",
-    "inner:leave",
-    "outer:leave",
-  ]);
+  expect(result).toBe(7);
+  expect(log).toEqual(["body", "close"]);
 });
 
 test("beforeEach then body then afterEach, outer describe then inner", () => {
@@ -1881,7 +1994,7 @@ test("integration setup runs before every user beforeEach, and its cleanup after
   ]);
 });
 
-test("afterEach runs inside every integration's `around`, like the body", () => {
+test("afterEach runs inside every integration's wrapper, like the body", () => {
   const log: string[] = [];
   const framework = recordingFramework();
   const { describe, it, afterEach } = initialize({
@@ -1906,15 +2019,17 @@ test("afterEach runs inside every integration's `around`, like the body", () => 
 /**
  * The reason `afterEach` settles inside `enterBody`: a continuation runs in the
  * async context active where it was chained, so an `afterEach` chained at the
- * top of `enterFrame` would see none of the scope an `around` opened, though
- * the body and every `beforeEach` did.
+ * top of `enterFrame` would see none of the scope a wrapper opened, though the
+ * body and every `beforeEach` did.
  */
-test("an async afterEach sees the async context its integration's `around` opened", async () => {
+test("an async afterEach sees the scope its integration's wrapper opened", async () => {
   const store = new AsyncLocalStorage<string>();
   const scoping: Integration<{}> = {
     name: "scoping",
     provides: {},
-    around: (_identity, body) => store.run("scoped", body),
+    *frame() {
+      yield (body) => store.run("scoped", () => body(undefined));
+    },
   };
   const seen: string[] = [];
   const framework = recordingFramework();
@@ -1941,6 +2056,480 @@ test("an async afterEach sees the async context its integration's `around` opene
   await invoke(testsOf(framework)[0]!);
 
   expect(seen).toEqual(["before:scoped", "body:scoped", "after:scoped"]);
+});
+
+/**
+ * The same reasoning, applied to integration cleanups. Each settles inside its
+ * own wrapper rather than at the top of `enterFrame`, so teardown can reach
+ * whatever that wrapper established.
+ */
+test("a frame's teardown sees the scope its own wrapper opened", async () => {
+  const store = new AsyncLocalStorage<string>();
+  const seen: Array<string | undefined> = [];
+  const scoping: Integration<{}> = {
+    name: "scoping",
+    provides: {},
+    /**
+     * Setup that must run _inside_ the scope goes inside the wrapper: code
+     * before the `yield` runs before harness has applied it, so it is outside.
+     * Teardown after the `yield` is inside, because the resumption is chained
+     * within the wrapper's own callback.
+     */
+    *frame() {
+      try {
+        yield (body) =>
+          store.run("scoped", () => {
+            seen.push(`setup:${store.getStore()}`);
+            return body(undefined);
+          });
+      } finally {
+        seen.push(`cleanup:${store.getStore()}`);
+      }
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [scoping] });
+
+  it("leaf", async () => {
+    await Promise.resolve();
+    seen.push(`body:${store.getStore()}`);
+  });
+
+  await invoke(testsOf(framework)[0]!);
+
+  expect(seen).toEqual(["setup:scoped", "body:scoped", "cleanup:scoped"]);
+});
+
+test("teardown still runs inner-first when every integration wraps", async () => {
+  const log: string[] = [];
+  const framed = (name: string): Integration<{}> => ({
+    name,
+    provides: {},
+    *frame() {
+      try {
+        yield (body) => body(undefined);
+      } finally {
+        log.push(`${name}:cleanup`);
+      }
+    },
+  });
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [framed("outer"), framed("mid"), framed("inner")],
+  });
+
+  it("leaf", async () => {
+    await Promise.resolve();
+    log.push("body");
+  });
+
+  await invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual([
+    "body",
+    "inner:cleanup",
+    "mid:cleanup",
+    "outer:cleanup",
+  ]);
+});
+
+/**
+ * Where a cleanup runs and where its error is collected are independent. Each
+ * settles in its own frame, yet the failures still reach one list, so a run
+ * with several broken teardowns reports once rather than a frame at a time.
+ */
+/**
+ * A wrapper hands what it opened to the providers by passing it to `body`, and
+ * the frame's own teardown has it lexically. Neither route needs a mutable
+ * variable written on the way in and read on the way out, which is what the
+ * callback shape used to force.
+ */
+test("a wrapper hands what it opened to the providers and to its teardown", async () => {
+  const opened = { id: 7 };
+  const seen: unknown[] = [];
+  const threading: Integration<{ conn: { id: number } }, { id: number }> = {
+    name: "threading",
+    provides: { conn: (_identity, established) => established },
+    *frame() {
+      try {
+        yield (body) => body(opened);
+      } finally {
+        seen.push(opened);
+      }
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [threading] });
+
+  let provided: unknown;
+  it("leaf", async (context) => {
+    await Promise.resolve();
+    provided = context.conn;
+  });
+
+  await invoke(testsOf(framework)[0]!);
+
+  expect(provided).toBe(opened);
+  expect(seen).toEqual([opened]);
+});
+
+test("a frame that yields no wrapper leaves the established value `undefined`", () => {
+  const seen: unknown[] = [];
+  const plain: Integration<{ n: number }> = {
+    name: "plain",
+    provides: {
+      n: (_identity, established) => {
+        seen.push(established);
+        return 1;
+      },
+    },
+    *frame() {
+      yield;
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [plain] });
+
+  it("leaf", () => {});
+  invoke(testsOf(framework)[0]!);
+
+  expect(seen).toEqual([undefined]);
+});
+
+/**
+ * A `try`/`finally` written in a wrapping callback does not mean what it looks
+ * like: the callback returns at an async body's first `await`, and no helper
+ * called from inside it can suspend it — only `await` and `yield` suspend a
+ * function, and `await` would change what the callback returns. Here the
+ * `yield` _is_ the body, so the `finally` lands at settlement and everything
+ * opened above it is still in scope.
+ */
+test("a frame runs its `finally` after a synchronous body", () => {
+  const log: string[] = [];
+  const generated: Integration<{}> = {
+    name: "generated",
+    provides: {},
+    *frame() {
+      log.push("open");
+      try {
+        yield;
+      } finally {
+        log.push("close");
+      }
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [generated] });
+
+  it("leaf", () => void log.push("body"));
+  invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual(["open", "body", "close"]);
+});
+
+test("a frame runs its `finally` after an async body, not at the first await", async () => {
+  const log: string[] = [];
+  const generated: Integration<{}> = {
+    name: "generated",
+    provides: {},
+    *frame() {
+      log.push("open");
+      try {
+        yield;
+      } finally {
+        log.push("close");
+      }
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [generated] });
+
+  it("leaf", async () => {
+    await Promise.resolve();
+    log.push("body");
+  });
+
+  await invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual(["open", "body", "close"]);
+});
+
+test("a failing body reaches a frame's `catch`, and still wins", async () => {
+  const boom = new Error("body failed");
+  const caught: unknown[] = [];
+  const generated: Integration<{}> = {
+    name: "generated",
+    provides: {},
+    *frame() {
+      try {
+        yield;
+      } catch (error) {
+        caught.push(error);
+      }
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [generated] });
+
+  it("leaf", async () => {
+    await Promise.resolve();
+    throw boom;
+  });
+
+  await expect(invoke(testsOf(framework)[0]!)).rejects.toBe(boom);
+  expect(caught).toEqual([boom]);
+});
+
+test("a frame that throws during teardown is collected like any cleanup", () => {
+  const teardown = new Error("teardown failed");
+  const generated: Integration<{}> = {
+    name: "generated",
+    provides: {},
+    *frame() {
+      try {
+        yield;
+      } finally {
+        throw teardown;
+      }
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [generated] });
+
+  it("leaf", () => {});
+
+  const error = spyOn(console, "error");
+  error.mockImplementation(() => {});
+  try {
+    invoke(testsOf(framework)[0]!);
+    throw new Error("expected AggregateError");
+  } catch (thrown) {
+    expect(thrown).toBeInstanceOf(AggregateError);
+    if (thrown instanceof AggregateError) {
+      expect(thrown.errors).toEqual([teardown]);
+    }
+  } finally {
+    error.mockRestore();
+  }
+});
+
+test("an `async function*` frame works, and promotes the test", async () => {
+  const log: string[] = [];
+  const generated: Integration<{}> = {
+    name: "generated",
+    provides: {},
+    async *frame() {
+      await Promise.resolve();
+      log.push("open");
+      try {
+        yield;
+      } finally {
+        await Promise.resolve();
+        log.push("close");
+      }
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [generated] });
+
+  it("leaf", () => void log.push("body"));
+
+  const result = invoke(testsOf(framework)[0]!);
+  expect(typeof (result as PromiseLike<unknown>)?.then).toBe("function");
+  await result;
+
+  expect(log).toEqual(["open", "body", "close"]);
+});
+
+test("frames and helper-built integrations interleave inner-first", async () => {
+  const log: string[] = [];
+  const generated = (name: string): Integration<{}> => ({
+    name,
+    provides: {},
+    *frame() {
+      try {
+        yield;
+      } finally {
+        log.push(`${name}:generator`);
+      }
+    },
+  });
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [
+      generated("outer"),
+      settingUp("mid", log),
+      generated("inner"),
+    ],
+  });
+
+  it("leaf", async () => {
+    await Promise.resolve();
+    log.push("body");
+  });
+
+  await invoke(testsOf(framework)[0]!);
+
+  expect(log).toEqual([
+    "mid:setup",
+    "body",
+    "inner:generator",
+    "mid:cleanup",
+    "outer:generator",
+  ]);
+});
+
+/**
+ * Discarding a non-generator would be indistinguishable from an integration
+ * with no frame at all, so the suite would pass with neither the setup nor the
+ * teardown the author believed they had written.
+ */
+test("a `frame` that is not a generator raises `IntegrationFrameResultError`", () => {
+  const confused: Integration<{}> = {
+    name: "confused",
+    provides: {},
+    // @ts-expect-error — a frame is a generator; `provides` contributes values.
+    frame: () => ({ transaction: 1 }),
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [confused] });
+
+  it("leaf", () => {});
+
+  expect(() => invoke(testsOf(framework)[0]!)).toThrow(
+    HarnessError.IntegrationFrameResultError,
+  );
+});
+
+/** The likeliest mistake: a `frame` written as a plain setup returning teardown. */
+test("the guard catches a `frame` written as a plain function", () => {
+  const confused: Integration<{}> = {
+    name: "confused",
+    provides: {},
+    // @ts-expect-error — a frame is a generator, not a function returning one.
+    frame: () => () => {},
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [confused] });
+
+  it("leaf", () => {});
+
+  expect(() => invoke(testsOf(framework)[0]!)).toThrow(
+    HarnessError.IntegrationFrameResultError,
+  );
+});
+
+/**
+ * The `yield` carries a wrapper, not a value. Yielding the connection or the
+ * transaction is the mistake, and silently discarding it would mean the body
+ * never runs inside the scope the author opened.
+ */
+test("a `frame` that yields a value rather than a wrapper raises `IntegrationFrameWrapperError`", () => {
+  const confused: Integration<{}> = {
+    name: "confused",
+    provides: {},
+    // @ts-expect-error — the `yield` carries a wrapper, or nothing.
+    *frame() {
+      yield { transaction: 1 };
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [confused] });
+
+  it("leaf", () => {});
+
+  expect(() => invoke(testsOf(framework)[0]!)).toThrow(
+    HarnessError.IntegrationFrameWrapperError,
+  );
+});
+
+test("a frame that yields without teardown passes the body's value through", () => {
+  const quiet: Integration<{}> = {
+    name: "quiet",
+    provides: {},
+    *frame() {
+      yield;
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [quiet] });
+
+  it("leaf", () => 3);
+
+  expect(invoke(testsOf(framework)[0]!)).toBe(3);
+});
+
+test("a frame that yields twice raises `IntegrationFrameYieldError`", () => {
+  const generated: Integration<{}> = {
+    name: "greedy",
+    provides: {},
+    *frame() {
+      yield;
+      yield;
+    },
+  };
+  const framework = recordingFramework();
+  const { it } = initialize({ framework, integrations: [generated] });
+
+  it("leaf", () => {});
+
+  const error = spyOn(console, "error");
+  error.mockImplementation(() => {});
+  try {
+    invoke(testsOf(framework)[0]!);
+    throw new Error("expected AggregateError");
+  } catch (thrown) {
+    expect(thrown).toBeInstanceOf(AggregateError);
+    if (thrown instanceof AggregateError) {
+      expect(thrown.errors[0]).toBeInstanceOf(
+        HarnessError.IntegrationFrameYieldError,
+      );
+    }
+  } finally {
+    error.mockRestore();
+  }
+});
+
+test("teardown errors from separate frames aggregate exactly once", async () => {
+  const innerError = new Error("inner cleanup");
+  const outerError = new Error("outer cleanup");
+  const failing = (name: string, error: Error): Integration<{}> => ({
+    name,
+    provides: {},
+    *frame() {
+      try {
+        yield (body) => body(undefined);
+      } finally {
+        throw error;
+      }
+    },
+  });
+  const framework = recordingFramework();
+  const { it } = initialize({
+    framework,
+    integrations: [failing("outer", outerError), failing("inner", innerError)],
+  });
+
+  it("leaf", async () => {
+    await Promise.resolve();
+  });
+
+  const error = spyOn(console, "error");
+  error.mockImplementation(() => {});
+  try {
+    await invoke(testsOf(framework)[0]!);
+    throw new Error("expected AggregateError");
+  } catch (thrown) {
+    expect(thrown).toBeInstanceOf(AggregateError);
+    if (thrown instanceof AggregateError) {
+      expect(thrown.errors).toEqual([innerError, outerError]);
+    }
+    expect(error).toHaveBeenCalledTimes(1);
+  } finally {
+    error.mockRestore();
+  }
 });
 
 test("a failing afterEach reaches integration cleanups as the test's failure", () => {

@@ -85,18 +85,26 @@ export function conformance(framework: Framework): void {
   const outer: Integration<Probe> = {
     name: "conformance-outer",
     provides: { identity: (identity) => identity },
-    setup(identity) {
+    *frame(identity) {
       note(identity, "outer:setup");
-      return () => note(identity, "outer:cleanup");
+      try {
+        yield;
+      } finally {
+        note(identity, "outer:cleanup");
+      }
     },
   };
 
   const inner: Integration<{}> = {
     name: "conformance-inner",
     provides: {},
-    setup(identity) {
+    *frame(identity) {
       note(identity, "inner:setup");
-      return () => note(identity, "inner:cleanup");
+      try {
+        yield;
+      } finally {
+        note(identity, "inner:cleanup");
+      }
     },
   };
 
