@@ -1,6 +1,6 @@
 {
   "name": "@ghostry/harness",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "license": "MIT",
   "description": "A context-aware wrapper for integrations over a Jest-compatible test framework.",
   "keywords": [
