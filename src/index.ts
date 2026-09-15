@@ -40,16 +40,20 @@ export { HarnessError } from "./Error";
  * — `provides` is a `Provides<$Context, $Established>`, one `Provider` per
  * context key; `Frame` is the generator `frame` returns and `Wrapper` is the
  * optional thing it yields; `TestContext` is the merged first parameter of a
- * wrapped body.
+ * wrapped body. Both integration hooks take one object: `FrameArgs` for
+ * `frame`, and `ProviderArgs` — the same thing plus `established` — for a
+ * provider.
  */
 export type {
   AnyIntegration,
   Frame,
+  FrameArgs,
   Identity,
   InitializeOptions,
   Initialized,
   Integration,
   Provider,
+  ProviderArgs,
   Provides,
   TestContext,
   Wrapper,

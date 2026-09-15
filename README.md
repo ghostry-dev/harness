@@ -44,7 +44,7 @@ export const { describe, it, expect } = initializeHarness({
 });
 ```
 
-`@ghostry/harness` depends on neither fabricator nor the runner. Integrations satisfy `{ name, provides, frame? }` structurally: `provides` is a map of context key to `(identity, established) => value` and is the only source of that integration's keys, so there is nothing to declare separately and nothing that could name a key the integration does not actually contribute.
+`@ghostry/harness` depends on neither fabricator nor the runner. Integrations satisfy `{ name, provides, frame? }` structurally: `provides` is a map of context key to `({ identity, established }) => value` and is the only source of that integration's keys, so there is nothing to declare separately and nothing that could name a key the integration does not actually contribute.
 
 `frame` is the whole per-test lifecycle in one generator with one `yield`. Everything before it is setup, the body runs at it, everything after it is teardown:
 
@@ -64,8 +64,8 @@ That `try`/`finally` means what it looks like, which a callback's could not. A c
 When the body must run **inside** something — an `AsyncLocalStorage` scope, a library's own `wrap`, a pooled connection's callback — yield a wrapper function. It receives the body, runs it wherever it needs to, and returns its value unchanged. Whatever it passes to `body` reaches your providers:
 
 ```ts
-provides: { db: (_identity, tx) => tx },
-*frame(identity) {
+provides: { db: ({ established: tx }) => tx },
+*frame({ identity }) {
   try {
     yield (body) => withConnection(identity, (tx) => body(tx));
   } finally {

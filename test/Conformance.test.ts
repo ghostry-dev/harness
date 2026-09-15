@@ -23,7 +23,7 @@ const seen: string[] = [];
 
 const probe: Integration<{ identity: Identity }> = {
   name: "probe",
-  provides: { identity: (identity) => identity },
+  provides: { identity: ({ identity }) => identity },
 };
 
 const { describe, it } = initialize({ framework, integrations: [probe] });

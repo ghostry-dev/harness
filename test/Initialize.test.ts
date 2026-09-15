@@ -35,7 +35,7 @@ function tracing(
   return {
     name,
     provides,
-    *frame(identity) {
+    *frame({ identity }) {
       identities.push(identity);
       log.push(`${name}:enter`);
       try {
@@ -2150,7 +2150,7 @@ test("a wrapper hands what it opened to the providers and to its teardown", asyn
   const seen: unknown[] = [];
   const threading: Integration<{ conn: { id: number } }, { id: number }> = {
     name: "threading",
-    provides: { conn: (_identity, established) => established },
+    provides: { conn: ({ established }) => established },
     *frame() {
       try {
         yield (body) => body(opened);
@@ -2179,7 +2179,7 @@ test("a frame that yields no wrapper leaves the established value `undefined`", 
   const plain: Integration<{ n: number }> = {
     name: "plain",
     provides: {
-      n: (_identity, established) => {
+      n: ({ established }) => {
         seen.push(established);
         return 1;
       },

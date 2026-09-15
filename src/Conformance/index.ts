@@ -84,8 +84,8 @@ export function conformance(framework: Framework): void {
    */
   const outer: Integration<Probe> = {
     name: "conformance-outer",
-    provides: { identity: (identity) => identity },
-    *frame(identity) {
+    provides: { identity: ({ identity }) => identity },
+    *frame({ identity }) {
       note(identity, "outer:setup");
       try {
         yield;
@@ -98,7 +98,7 @@ export function conformance(framework: Framework): void {
   const inner: Integration<{}> = {
     name: "conformance-inner",
     provides: {},
-    *frame(identity) {
+    *frame({ identity }) {
       note(identity, "inner:setup");
       try {
         yield;

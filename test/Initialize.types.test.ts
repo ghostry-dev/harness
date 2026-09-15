@@ -2,8 +2,10 @@ import * as bun from "bun:test";
 import {
   initialize,
   type Frame,
+  type FrameArgs,
   type Identity,
   type Integration,
+  type ProviderArgs,
   type Wrapper,
 } from "@ghostry/harness";
 import {
@@ -206,7 +208,25 @@ export type Assertions = [
   Expect<
     Equal<
       Integration<{ n: number }>["frame"],
-      ((identity: Identity) => Frame<void>) | undefined
+      ((args: FrameArgs) => Frame<void>) | undefined
+    >
+  >,
+  /**
+   * Both hooks take one object, and a provider's is the frame's plus
+   * `established` — so an integration author destructures the same way in both,
+   * and a key added to `FrameArgs` reaches providers without a second edit.
+   */
+  Expect<Equal<FrameArgs, { readonly identity: Identity }>>,
+  Expect<
+    Equal<
+      ProviderArgs<string>,
+      { readonly identity: Identity } & { readonly established: string }
+    >
+  >,
+  Expect<
+    Equal<
+      Integration<{ n: number }, string>["provides"]["n"],
+      (args: ProviderArgs<string>) => number
     >
   >,
   /**

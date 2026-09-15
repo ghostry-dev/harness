@@ -140,10 +140,10 @@ function settle<$Return>(
  */
 function isFrame(value: unknown): value is Frame<unknown> {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as Frame<unknown>).next === "function" &&
-    typeof (value as Frame<unknown>).throw === "function"
+    typeof value === "object"
+    && value !== null
+    && typeof (value as Frame<unknown>).next === "function"
+    && typeof (value as Frame<unknown>).throw === "function"
   );
 }
 
@@ -186,9 +186,9 @@ function openFrame(
     const wrapper = step.value;
 
     if (
-      wrapper !== undefined &&
-      wrapper !== null &&
-      typeof wrapper !== "function"
+      wrapper !== undefined
+      && wrapper !== null
+      && typeof wrapper !== "function"
     ) {
       throw new HarnessError.IntegrationFrameWrapperError(name, typeof wrapper);
     }
@@ -431,7 +431,7 @@ export function enterFrame<$Context extends object, $Return>(
      */
     const descend = (established: unknown): $Return => {
       for (const key of Object.keys(current.provides)) {
-        const value = current.provides[key]!(identity, established);
+        const value = current.provides[key]!({ identity, established });
 
         /**
          * `provides` is the sole source of these keys and `initialize` has
@@ -447,7 +447,7 @@ export function enterFrame<$Context extends object, $Return>(
 
     if (typeof current.frame !== "function") return descend(undefined);
 
-    const frame = current.frame(identity);
+    const frame = current.frame({ identity });
 
     if (!isFrame(frame)) {
       throw new HarnessError.IntegrationFrameResultError(

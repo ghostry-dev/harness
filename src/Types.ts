@@ -41,6 +41,27 @@ export type Identity = {
 };
 
 /**
+ * What harness hands {@link Integration.frame}.
+ *
+ * An object rather than a bare `Identity`, so both integration hooks are called
+ * the same way and a field added later arrives as a key an existing hook can
+ * ignore, rather than as a positional parameter every hook has to thread past.
+ */
+export type FrameArgs = { readonly identity: Identity };
+
+/**
+ * What harness hands each provider: everything {@link FrameArgs} carries, plus
+ * what this integration's own wrapper established.
+ *
+ * Stated as an extension of `FrameArgs` because that is the actual relationship
+ * — a provider runs inside the frame and knows everything the frame knew, and
+ * one thing more.
+ */
+export type ProviderArgs<$Established = void> = FrameArgs & {
+  readonly established: $Established;
+};
+
+/**
  * One context key's value, as a function of the test's `Identity` rather than a
  * fixed value — the per-test scope (a seed, a temp directory) is usually
  * derived from the path, not constant.
@@ -51,8 +72,7 @@ export type Identity = {
  * by both, written on the way in and read on the way out.
  */
 export type Provider<$Value, $Established = void> = (
-  identity: Identity,
-  established: $Established,
+  args: ProviderArgs<$Established>,
 ) => $Value;
 
 /**
@@ -145,7 +165,7 @@ export type Frame<$Established = void> =
 export type Integration<$Context extends object, $Established = void> = {
   readonly name: string;
   readonly provides: Provides<$Context, $Established>;
-  frame?(identity: Identity): Frame<$Established>;
+  frame?(args: FrameArgs): Frame<$Established>;
 };
 
 /**
