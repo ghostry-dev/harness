@@ -113,6 +113,40 @@ The scope carries `describe`, `it`, `test`, and the four hooks bound to that sui
 
 Declaring the parameter is the opt in, and an `async` callback without one throws `AsyncDescribeError` naming the suite — it has no way to address its registrations, and would file them at a shallower path. Once addressed, the thenable goes to the runner and each collects it as it always does (bun, vitest and `node:test` await it; jest rejects an `async` describe; mocha discards the tests inside one).
 
+## Rewriting an integration's keys
+
+An integration names the keys it contributes, and by default you take them as it ships them. `remap` wraps one integration and rewrites that map — rename a key, lift a nested value to the root, drop one you do not want, or add one of your own:
+
+```ts
+import { initialize, remap } from "@ghostry/harness";
+import { integration as externIntegration } from "@ghostry/extern/harnessing";
+
+export const { describe, it, expect } = initialize({
+  framework,
+  integrations: [
+    remap(externIntegration(), {
+      provides: { mock: ({ provided }) => provided.extern.mock },
+    }),
+  ],
+});
+```
+
+Bodies now read `context.mock`, and `context.extern` is gone — a key the remapping does not name is dropped. `provided` is the wrapped integration's own context, typed from the integration you passed, and a rewritten provider receives everything an ordinary one does beside it (`identity`, `established`). Pass `name` alongside `provides` to rename the integration itself, which is worth doing when the remapping exists to tell two of them apart.
+
+That is also the only way to use two integrations that contribute the same key. `initialize` rejects a collision eagerly, and nothing downstream of it can un-reject one, so rename one side:
+
+```ts
+integrations: [
+  postgres(),
+  remap(redis(), {
+    name: "redis (as cache)",
+    provides: { cache: ({ provided }) => provided.db },
+  }),
+];
+```
+
+The result is an ordinary integration: its rewritten keys go through the same collision, `__proto__` and `row` checks as any other, a wrapped `frame` still runs and still establishes what it established, and an integration with no `frame` still has none afterwards. Each wrapped provider runs exactly once per test. Remapping renames what an integration contributes, it does not change how often it does its work. `remap` composes, and a remapping that names no keys contributes none while still running the wrapped `frame`.
+
 ## Conformance
 
 A subpath export registers a suite that checks your runner behaves the way this library assumes, so compatibility is something your own environment can test rather than a list of runners that happened to work:

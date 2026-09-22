@@ -34,6 +34,16 @@ export { initialize } from "./Core";
 export { HarnessError } from "./Error";
 
 /**
+ * Wrap one integration and rewrite the keys it contributes — rename one, lift a
+ * nested value to the root, drop one, or add one. The result is an ordinary
+ * integration, so its rewritten keys go through the same eager checks every
+ * other integration's do. It is also the only way two third-party integrations
+ * that both contribute the same key can be used together, since `initialize`
+ * rejects that collision and nothing downstream of it can un-reject one.
+ */
+export { remap } from "./Remap";
+
+/**
  * The integration contract, and the two types that join it to the framework
  * side. `Identity` is what identifies one registered test or suite;
  * `Integration` is the `{ name, provides, frame? }` shape `initialize` invokes
@@ -43,6 +53,11 @@ export { HarnessError } from "./Error";
  * wrapped body. Both integration hooks take one object: `FrameArgs` for
  * `frame`, and `ProviderArgs` — the same thing plus `established` — for a
  * provider.
+ *
+ * `remap`'s side is the same shape one step out: `RemapOptions` is its `{
+ * name?, provides }` argument, `Remapping` the rewritten key map, and
+ * `RemapArgs` what a rewritten provider receives — `ProviderArgs` plus
+ * `provided`, the wrapped integration's own context.
  */
 export type {
   AnyIntegration,
@@ -55,6 +70,9 @@ export type {
   Provider,
   ProviderArgs,
   Provides,
+  RemapArgs,
+  RemapOptions,
+  Remapping,
   TestContext,
   Wrapper,
 } from "./Types";

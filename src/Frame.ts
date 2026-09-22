@@ -430,8 +430,23 @@ export function enterFrame<$Context extends object, $Return>(
      * on the way in and read on the way out.
      */
     const descend = (established: unknown): $Return => {
+      /**
+       * **One object, shared by every provider of this integration, minted per
+       * frame.** That identity is load-bearing, not an allocation tidy-up: it
+       * is the only stable per-test key a wrapping helper can memoize on, which
+       * is what lets `remap` build the wrapped integration's context once
+       * however many remapped keys read it. `identity` cannot serve — it is
+       * built at registration and reused for every invocation, so a retry or a
+       * `.concurrent` re-entry would share the entry with the previous test.
+       *
+       * Frozen because sharing is new: a provider reaching into its own args
+       * cannot now disturb the ones that follow it. `ProviderArgs` already
+       * declared every field `readonly`.
+       */
+      const args = Object.freeze({ identity, established });
+
       for (const key of Object.keys(current.provides)) {
-        const value = current.provides[key]!({ identity, established });
+        const value = current.provides[key]!(args);
 
         /**
          * `provides` is the sole source of these keys and `initialize` has

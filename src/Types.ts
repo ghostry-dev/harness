@@ -176,6 +176,56 @@ export type Integration<$Context extends object, $Established = void> = {
  */
 export type AnyIntegration = Integration<Record<string, unknown>, any>;
 
+/**
+ * What harness hands a remapped provider: everything {@link ProviderArgs}
+ * carries, plus the context the wrapped integration itself produced.
+ *
+ * Stated as an extension of `ProviderArgs` for the same reason `ProviderArgs`
+ * extends `FrameArgs` — a remapped provider is a provider that knows one thing
+ * more.
+ */
+export type RemapArgs<
+  $Context extends object,
+  $Established = void,
+> = ProviderArgs<$Established> & { readonly provided: $Context };
+
+/**
+ * The keys a `remap` contributes in place of the wrapped integration's own.
+ * Homomorphic over `$Remapped`, exactly as {@link Provides} is over `$Context`,
+ * so the new keys and their value types are inferred back out of the object
+ * literal with nothing declared twice.
+ *
+ * A key absent here is dropped; a key naming something the wrapped integration
+ * never provided is added.
+ */
+export type Remapping<
+  $Context extends object,
+  $Remapped extends object,
+  $Established = void,
+> = {
+  readonly [$Key in keyof $Remapped]: (
+    args: RemapArgs<$Context, $Established>,
+  ) => $Remapped[$Key];
+};
+
+/**
+ * `remap`'s second argument. One object rather than positionals, as
+ * {@link InitializeOptions} is, so a field added later arrives as a key existing
+ * call sites ignore.
+ *
+ * `name` defaults to the wrapped integration's own. The override exists for the
+ * case that motivates remapping two integrations apart in the first place — a
+ * key collision — where a later error message has to tell them apart.
+ */
+export type RemapOptions<
+  $Context extends object,
+  $Remapped extends object,
+  $Established = void,
+> = {
+  readonly name?: string;
+  readonly provides: Remapping<$Context, $Remapped, $Established>;
+};
+
 type ContextOf<$Integration> =
   $Integration extends Integration<infer $Context, any> ? $Context : never;
 
