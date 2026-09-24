@@ -221,3 +221,88 @@ export function invoke(call: RecordedCall, thisArg?: unknown): unknown {
   }
   return fn.call(thisArg);
 }
+
+type Modifier = NonNullable<RecordedCall["modifier"]>;
+
+/** A recorded call from the chaining stand-in, carrying its whole chain. */
+export type ChainedCall = {
+  readonly kind: "describe" | "it";
+  /** Every modifier on the chain that registered it, deduplicated and sorted. */
+  readonly modifiers: ReadonlyArray<Modifier>;
+  readonly name: string;
+  readonly fn: (() => unknown) | undefined;
+};
+
+type ChainedTest = AnyFn & {
+  readonly only: ChainedTest;
+  readonly skip: ChainedTest;
+  readonly todo: ChainedTest;
+  readonly failing: ChainedTest;
+  readonly concurrent: ChainedTest;
+};
+
+type ChainedDescribe = AnyFn & {
+  readonly only: ChainedDescribe;
+  readonly skip: ChainedDescribe;
+  readonly todo: ChainedDescribe;
+};
+
+export type ChainingFramework = {
+  readonly describe: ChainedDescribe;
+  readonly it: ChainedTest;
+  readonly test: ChainedTest;
+  readonly expect: AnyFn;
+  readonly calls: ReadonlyArray<ChainedCall>;
+};
+
+/**
+ * Stands in for rstest and vitest, which build every modifier in a getter: each
+ * read returns a **fresh** function, and chaining is unbounded, so `it.only !==
+ * it.only` and `it.only.only.only` is callable. Nothing reachable through a
+ * modifier ever repeats by identity. The chain accumulates as flags — a
+ * repeated modifier is a no-op and order does not matter — which is what the
+ * `modifiers` on each recorded call shows.
+ *
+ * Nested `describe` callbacks run eagerly; collection order is
+ * `recordingFramework`'s concern, not this one's.
+ */
+export function chainingFramework(): ChainingFramework {
+  const calls: ChainedCall[] = [];
+
+  const chain = <$Chained>(
+    kind: ChainedCall["kind"],
+    names: ReadonlyArray<Modifier>,
+    modifiers: ReadonlyArray<Modifier>,
+  ): $Chained => {
+    const register = (name: string, fn?: () => unknown) => {
+      calls.push({ kind, modifiers, name, fn });
+      if (kind === "describe" && typeof fn === "function") fn();
+    };
+    for (const name of names) {
+      Object.defineProperty(register, name, {
+        get: () =>
+          chain(
+            kind,
+            names,
+            modifiers.includes(name) ? modifiers : [...modifiers, name].sort(),
+          ),
+        enumerable: true,
+      });
+    }
+    return register as $Chained;
+  };
+
+  const it = chain<ChainedTest>(
+    "it",
+    ["only", "skip", "todo", "failing", "concurrent"],
+    [],
+  );
+
+  return {
+    describe: chain<ChainedDescribe>("describe", ["only", "skip", "todo"], []),
+    it,
+    test: it,
+    expect: (...args: unknown[]) => args,
+    calls,
+  };
+}

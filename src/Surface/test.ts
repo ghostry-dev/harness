@@ -25,13 +25,15 @@ export function test(
   integrations: ReadonlyArray<AnyIntegration>,
   registry: HookRegistry,
 ): AnyTestSurface {
-  const local = new WeakMap<object, AnyTestSurface>();
+  const local = new Map<string, AnyTestSurface>();
 
   const decorate = (
     native: Framework["it"],
     bindOwner: object,
+    modifiers: ReadonlyArray<string>,
   ): AnyTestSurface => {
-    const cached = local.get(native);
+    const key = modifiers.join(',');
+    const cached = local.get(key);
     if (typeof cached !== "undefined") return cached;
 
     const registrar = wrapTest(
@@ -41,13 +43,13 @@ export function test(
       registry,
     );
     const wrapped = asCallable(registrar);
-    local.set(native, wrapped);
+    local.set(key, wrapped);
 
-    redecorate(native, wrapped, decorate, "only");
-    redecorate(native, wrapped, decorate, "skip");
-    redecorate(native, wrapped, decorate, "todo");
-    redecorate(native, wrapped, decorate, "failing");
-    redecorate(native, wrapped, decorate, "concurrent");
+    redecorate(native, wrapped, decorate, modifiers, "only");
+    redecorate(native, wrapped, decorate, modifiers, "skip");
+    redecorate(native, wrapped, decorate, modifiers, "todo");
+    redecorate(native, wrapped, decorate, modifiers, "failing");
+    redecorate(native, wrapped, decorate, modifiers, "concurrent");
 
     (wrapped as { each: AnyTestSurface["each"] }).each = ((
       first: unknown,
@@ -61,7 +63,7 @@ export function test(
     return wrapped;
   };
 
-  return decorate(source, owner);
+  return decorate(source, owner, []);
 }
 
 /**

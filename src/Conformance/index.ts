@@ -1,14 +1,15 @@
 /**
  * The conformance kit: a suite a consumer registers against their own runner,
- * so "works on bun, vitest, and jest" stops being a list of runners that
- * happened to work and becomes a claim each environment can test for itself.
+ * so "works on bun, vitest, rstest, and jest" stops being a list of runners
+ * that happened to work and becomes a claim each environment can test for
+ * itself.
  *
  * It asserts what this library **requires** of a runner, and nothing it merely
- * accommodates. An addressed `async` describe is the notable omission: bun and
- * vitest await one, jest rejects it, and mocha silently drops its tests — this
- * library hands the thenable over and lets the runner decide, so no answer is
- * wrong. Nor does it assert where a runner reports a synchronous throw, which
- * no property of the error can reveal from inside the process.
+ * accommodates. An addressed `async` describe is the notable omission: bun,
+ * vitest and rstest await one, jest rejects it, and mocha silently drops its
+ * tests — this library hands the thenable over and lets the runner decide, so
+ * no answer is wrong. Nor does it assert where a runner reports a synchronous
+ * throw, which no property of the error can reveal from inside the process.
  *
  * @module
  */
@@ -58,13 +59,13 @@ type Step = {
  *
  * Whether the runner awaits a promise a body returns is checked through a body
  * that **rejects**, registered with `it.failing` (bun, jest) or `it.fails`
- * (vitest): the run stays green only if the rejection reached the runner as a
- * failure. Nothing gentler discriminates — microtasks drain before the event
- * loop moves on, so a runner that yields even once between tests lets any
- * microtask-bound body finish first, and its ordering then looks exactly like
- * awaiting. mocha and `node:test` declare neither modifier, so there the kit
- * registers a skipped test saying the check could not run, rather than leaving
- * that claim silently unchecked — both declare `it.skip`.
+ * (vitest, rstest): the run stays green only if the rejection reached the
+ * runner as a failure. Nothing gentler discriminates — microtasks drain before
+ * the event loop moves on, so a runner that yields even once between tests lets
+ * any microtask-bound body finish first, and its ordering then looks exactly
+ * like awaiting. mocha and `node:test` declare neither modifier, so there the
+ * kit registers a skipped test saying the check could not run, rather than
+ * leaving that claim silently unchecked — both declare `it.skip`.
  *
  * Every wait is a microtask, never a timer, so the suite is safe to run with
  * fake timers installed — on bun, a timer awaited under fake timers hangs the

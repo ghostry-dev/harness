@@ -35,22 +35,24 @@ export function describe(
   cursor: Cursor,
   scopeFor: (suite: Suite) => object,
 ): AnyDescribeSurface {
-  const local = new WeakMap<object, AnyDescribeSurface>();
+  const local = new Map<string, AnyDescribeSurface>();
 
   const decorate = (
     native: Framework["describe"],
     bindOwner: object,
+    modifiers: ReadonlyArray<string>,
   ): AnyDescribeSurface => {
-    const cached = local.get(native);
+    const key = modifiers.join(',');
+    const cached = local.get(key);
     if (typeof cached !== "undefined") return cached;
 
     const registrar = wrapDescribe(bound(native, bindOwner), cursor, scopeFor);
     const wrapped = asCallable(registrar);
-    local.set(native, wrapped);
+    local.set(key, wrapped);
 
-    redecorate(native, wrapped, decorate, "only");
-    redecorate(native, wrapped, decorate, "skip");
-    redecorate(native, wrapped, decorate, "todo");
+    redecorate(native, wrapped, decorate, modifiers, "only");
+    redecorate(native, wrapped, decorate, modifiers, "skip");
+    redecorate(native, wrapped, decorate, modifiers, "todo");
 
     (wrapped as { each: AnyDescribeSurface["each"] }).each = ((
       first: unknown,
@@ -60,7 +62,7 @@ export function describe(
     return wrapped;
   };
 
-  return decorate(source, owner);
+  return decorate(source, owner, []);
 }
 
 /**

@@ -429,4 +429,8 @@ export type TestSurface<$Source, $Context extends object> = TestFn<$Context> & {
 export type Decorator<
   $Native extends Framework["it" | "describe"],
   $Surface,
-> = (native: $Native, bindOwner: object) => $Surface;
+> = (
+  native: $Native,
+  bindOwner: object,
+  modifiers: ReadonlyArray<string>,
+) => $Surface;

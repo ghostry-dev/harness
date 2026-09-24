@@ -8,6 +8,7 @@ import {
 import { expect, spyOn, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
+  chainingFramework,
   invoke,
   recordingFramework,
   recordingFrameworkWithoutSuiteHooks,
@@ -953,6 +954,69 @@ test("it.failing and it.concurrent forward to the framework", () => {
   expect(identities.map((identity) => identity.name)).toEqual([
     "will fail",
     "parallel",
+  ]);
+});
+
+/**
+ * rstest and vitest return a fresh function from every modifier read, at any
+ * depth, so a surface cached on native identity never hits and decoration
+ * recurses until the stack overflows. These pin decoration keyed on the
+ * modifier set instead.
+ */
+test("a runner whose modifiers are fresh getters at every depth still initializes", () => {
+  const framework = chainingFramework();
+  expect(framework.it.only).not.toBe(framework.it.only);
+
+  const { describe, it } = initialize({ framework });
+
+  expect(it.only.only).toBe(it.only);
+  expect(it.skip.only).toBe(it.only.skip);
+  expect(it.only.skip.todo.failing.concurrent).toBe(
+    it.concurrent.failing.todo.skip.only,
+  );
+  expect(describe.todo.only).toBe(describe.only.todo);
+});
+
+test("a chained modifier reaches the runner with its whole chain and still wraps the body", () => {
+  const identities: Identity[] = [];
+  const framework = chainingFramework();
+  const { describe, it } = initialize({
+    framework,
+    integrations: [
+      {
+        name: "probe",
+        provides: {
+          identity: ({ identity }: { identity: Identity }) => identity,
+        },
+      },
+    ],
+  });
+
+  describe.only.skip("suite", () => {
+    it.concurrent.only.concurrent("chained", ({ identity }) => {
+      identities.push(identity);
+    });
+    it.failing.each([1, 2])("row %s", ({ identity }) => {
+      identities.push(identity);
+    });
+  });
+
+  expect(
+    framework.calls.map((call) => [call.kind, call.modifiers, call.name]),
+  ).toEqual([
+    ["describe", ["only", "skip"], "suite"],
+    ["it", ["concurrent", "only"], "chained"],
+    ["it", ["failing"], "row 1"],
+    ["it", ["failing"], "row 2"],
+  ]);
+
+  for (const call of framework.calls) if (call.kind === "it") call.fn!();
+  expect(
+    identities.map((identity) => [identity.path, identity.name, identity.row]),
+  ).toEqual([
+    [["suite"], "chained", undefined],
+    [["suite"], "row 1", 0],
+    [["suite"], "row 2", 1],
   ]);
 });
 

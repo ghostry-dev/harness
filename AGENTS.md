@@ -157,11 +157,14 @@ What the runners actually declare, verified against the real packages rather tha
 | ------------ | ---------------------------------------------------------------------------------------- |
 | bun 1.3      | declares every modifier at every depth                                                   |
 | vitest 5     | **no `failing`** — spelled `fails`; chaining is unbounded and idempotent                 |
+| rstest 0.12  | **no `failing`** — spelled `fails`; chaining is unbounded and idempotent, as vitest      |
 | jest 30      | **no `describe.todo`**; `it.only` carries only `.failing`; `it.only.skip` does not exist |
 | node:test 20 | `only`/`skip`/`todo` only, carrying nothing further                                      |
 | mocha 12     | `only`/`skip` only, carrying nothing further                                             |
 
 **Bun's declarations are the inaccurate ones.** Its `.d.ts` types `only: Test<T>` recursively, so `it.only.only`, `it.skip.todo` and `describe.only.only` are all typed callable — and all throw when _read_ at runtime (`readNativeFn` swallows that, leaving the property absent). The derived surface reproduces bun's claim exactly. That inheritance is deliberate: the inaccuracy is bun's to fix, and `Initialize.types.test.ts` pins it so it is not mistaken for this library promising it. Every other runner's declarations match its runtime.
+
+**A decorated surface is keyed by the set of modifiers on its chain, never by the native function.** rstest and vitest build every modifier in a getter that returns a fresh function on each read, at unbounded depth, so no native identity ever repeats: a cache keyed on one never hits, and decoration recurses until the stack overflows inside `initialize`. Keyed on the set, `it.only.only` is `it.only` and `it.skip.only` is `it.only.skip`, which bounds decoration at one surface per subset. That assumes modifiers are idempotent and commute, true of every runner that chains them. The native member is still read before the cache is consulted, so a modifier the runner lacks at that position stays absent. `chainingFramework` in `test/fixtures/framework.ts` stands in for these runners; the recording stand-in's modifiers are stable plain properties and cannot show the failure.
 
 Internally `Core.ts` works in an erased `AnySource` form that declares every modifier at every depth, since `decorate` builds surfaces dynamically; `initialize` casts once, through `unknown`, at the return.
 

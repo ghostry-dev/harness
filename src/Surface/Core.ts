@@ -39,6 +39,25 @@ export function invokeNative(
   return (native as (...args: unknown[]) => unknown)(name, fn, ...rest);
 }
 
+/**
+ * Install modifier `name` on `wrapped`, decorating the native member it reads.
+ *
+ * A decorated surface is identified by the **set** of modifiers on its chain,
+ * never by the native function it wraps. rstest and vitest build every modifier
+ * in a getter that returns a fresh function on each read, at unbounded depth,
+ * so no native identity ever repeats and a cache keyed on one recurses until
+ * the stack overflows. Keyed on the set, a repeated modifier lands on the
+ * surface already being built (`it.only.only` is `it.only`) and a reordered
+ * chain on the one already built (`it.skip.only` is `it.only.skip`), so
+ * decoration is bounded by the number of modifier sets.
+ *
+ * That assumes modifiers are idempotent and commute, which holds for every
+ * runner that chains them at all: rstest and vitest merge them as flags, and
+ * jest's `it.only.failing` and `it.failing.only` register the same test. The
+ * native member is still read first, so a modifier the runner does not carry at
+ * this position — bun's `it.only.only`, which throws on read — stays absent
+ * rather than being supplied from the cache.
+ */
 export function redecorate<
   $Native extends Framework["it" | "describe"],
   $Surface,
@@ -47,11 +66,16 @@ export function redecorate<
   native: $Native,
   wrapped: $Surface,
   decorate: Decorator<$Native, $Surface>,
+  modifiers: ReadonlyArray<string>,
   name: $Name,
 ) {
   const nativeFn = readNativeFn(native, name) as $Native;
   if (!nativeFn) return;
 
+  const next = modifiers.includes(name)
+    ? modifiers
+    : [...modifiers, name].sort();
+
   type Casted = { [_ in $Name]: $Surface };
-  (wrapped as Casted)[name] = decorate(nativeFn, native);
+  (wrapped as Casted)[name] = decorate(nativeFn, native, next);
 }
