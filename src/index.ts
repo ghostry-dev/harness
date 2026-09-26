@@ -19,7 +19,8 @@
  * expect, beforeEach, afterEach, framework }`, plus `beforeAll`/`afterAll` when
  * the runner declares them — `it` and `test` are one implementation under two
  * names, `expect` is bound so a destructure does not drop `this`, and
- * `framework` is the unchanged module.
+ * `framework` is the unchanged module. `attest` holds assertions that narrow,
+ * built over that same `expect`.
  */
 export { initialize } from "./Core";
 
@@ -29,7 +30,8 @@ export { initialize } from "./Core";
  * a context key that would reach `Object.prototype`; `AmbientHookError` is a
  * top-level `beforeEach`/`afterEach`; `AsyncDescribeError` is a `describe`
  * callback that returned a thenable; `ConformanceError` is a guarantee the
- * conformance kit found the runner does not keep.
+ * conformance kit found the runner does not keep; `AttestationError` is an
+ * `attest` check the runner's own `expect` did not already fail.
  */
 export { HarnessError } from "./Error";
 
@@ -100,6 +102,11 @@ export type {
  * inherited rather than invented. `beforeEach`/`afterEach` are built here too
  * and are unconditional; `beforeAll`/`afterAll` follow the runner.
  *
+ * `Attest` is `initialize`'s `attest`: assertions that narrow, bound to the
+ * runner's `expect`. Narrowing through one requires the caller's own binding to
+ * carry an explicit type, so it is exported to be written as that annotation —
+ * `export const attest: Attest = harness.attest`.
+ *
  * `HookSurface` is that group as one type — the four members `initialize`
  * returns and every `SuiteScope` carries — and `HookBody` is what each of them
  * takes.
@@ -107,6 +114,7 @@ export type {
 export type { Framework } from "./Framework/Types";
 
 export type {
+  Attest,
   DescribeEach,
   DescribeFn,
   DescribeSurface,

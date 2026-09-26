@@ -1,5 +1,6 @@
 import type { Framework } from "./Framework/Types";
 import type {
+  Attest,
   DescribeSurface,
   HookSurface,
   TestSurface,
@@ -263,10 +264,11 @@ export type InitializeOptions<
 
 /**
  * What `initialize` returns. `it` and `test` are one implementation under two
- * names. `expect` is the framework's own, bound. `framework` is the unchanged
- * module — the escape hatch for anything this wrapper does not re-export.
- * `beforeEach`/`afterEach` are built here, so they are unconditional;
- * `beforeAll`/`afterAll` appear only when `$Framework` declares them.
+ * names. `expect` is the framework's own, bound, and `attest` is the narrowing
+ * assertions built over it. `framework` is the unchanged module — the escape
+ * hatch for anything this wrapper does not re-export. `beforeEach`/`afterEach`
+ * are built here, so they are unconditional; `beforeAll`/`afterAll` appear only
+ * when `$Framework` declares them.
  */
 export type Initialized<
   $Framework extends Framework,
@@ -276,5 +278,6 @@ export type Initialized<
   readonly it: TestSurface<$Framework["it"], TestContext<$Integrations>>;
   readonly test: TestSurface<$Framework["it"], TestContext<$Integrations>>;
   readonly expect: $Framework["expect"];
+  readonly attest: Attest;
   readonly framework: $Framework;
 } & HookSurface<$Framework, TestContext<$Integrations>>;

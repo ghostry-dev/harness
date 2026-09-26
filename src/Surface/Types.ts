@@ -8,6 +8,7 @@
  */
 
 import type { Framework } from "../Framework/Types";
+import type { AnyConstructor, InstanceOf } from "../Utility/Types";
 
 /**
  * A registration-time suite node. `parent` is captured when the wrapped
@@ -434,3 +435,109 @@ export type Decorator<
   bindOwner: object,
   modifiers: ReadonlyArray<string>,
 ) => $Surface;
+
+/**
+ * Assertions that narrow, bound to the runner's own `expect`. `expect(x)`
+ * cannot narrow `x`: it returns a matcher object, and a method on that object
+ * has no way to assert anything about the outer argument. Each member here is
+ * one call whose own signature carries the narrowing.
+ *
+ * **TypeScript narrows through an assertion only when every name in the call
+ * target is declared with an explicit type** (TS2775), and that means the
+ * caller's own binding, not this type. A destructure of `initialize`'s return
+ * never qualifies, annotated or not; an annotated `const` does:
+ *
+ * ```ts
+ * export const attest: Attest = harness.attest;
+ * ```
+ *
+ * Getting that wrong is a compile error, never a silent loss of narrowing.
+ * `definitely`, `throws` and `rejects` return their result rather than
+ * asserting it, so they need no annotation at all.
+ *
+ * Every member first hands its check to the runner's matcher, for the runner's
+ * own failure message, then checks again itself and throws
+ * `HarnessError.AttestationError` if the runner let it through. The second
+ * check is what makes the signatures sound: a runner whose `expect` does not
+ * throw (a soft assertion, a missing matcher) must still never resume the body
+ * with a narrowed type that is not true.
+ *
+ * Members that check a value take it first — `instanceOf(value, Class)`,
+ * `variant(value, key, tag)`, `that(value, guard)` — so each reads as the
+ * sentence it asserts. `throws` and `rejects` take the class first instead, so
+ * a multi-line thunk sits last, where callbacks go. `label` is an optional name
+ * for the subject, carried into the failure.
+ */
+export type Attest = {
+  /**
+   * The value is neither `null` nor `undefined` — exactly what `NonNullable`
+   * removes, so `0`, `""` and `false` still pass. Narrows in place;
+   * {@link Attest.definitely} is the same check as an expression.
+   */
+  readonly definite: <$Value>(
+    value: $Value,
+    label?: string,
+  ) => asserts value is NonNullable<$Value>;
+
+  /**
+   * {@link Attest.definite} as an expression: the same check, handing the value
+   * back — `attest.definitely(list[0]).name` — in place of `list[0]!`.
+   */
+  readonly definitely: <$Value>(
+    value: $Value,
+    label?: string,
+  ) => NonNullable<$Value>;
+
+  /** The value is an instance of `constructor`. */
+  readonly instanceOf: <$Constructor extends AnyConstructor>(
+    value: unknown,
+    constructor: $Constructor,
+    label?: string,
+  ) => asserts value is InstanceOf<$Constructor>;
+
+  /**
+   * The value's `key` is `tag`, narrowing a discriminated union to that member.
+   * `const` on the tag is load-bearing: without it the tag widens to the union
+   * of every tag and the call narrows nothing.
+   */
+  readonly variant: <
+    $Value,
+    $Key extends keyof $Value,
+    const $Tag extends $Value[$Key],
+  >(
+    value: $Value,
+    key: $Key,
+    tag: $Tag,
+    label?: string,
+  ) => asserts value is Extract<$Value, Record<$Key, $Tag>>;
+
+  /** The value satisfies a type guard, lifted into an assertion. */
+  readonly that: <$Value, $Narrowed extends $Value>(
+    value: $Value,
+    guard: (value: $Value) => value is $Narrowed,
+    label?: string,
+  ) => asserts value is $Narrowed;
+
+  /**
+   * `thunk` throws an instance of `constructor`, which is returned typed. The
+   * thunk runs exactly once, however many times the runner's matcher calls what
+   * it is handed. A thunk that returns a thenable fails because that what
+   * {@link Attest.rejects} is for.
+   */
+  readonly throws: <$Constructor extends AnyConstructor>(
+    constructor: $Constructor,
+    thunk: () => unknown,
+    label?: string,
+  ) => InstanceOf<$Constructor>;
+
+  /**
+   * `subject` rejects with an instance of `constructor`, which is returned
+   * typed. A thunk that throws before returning its promise counts as a
+   * rejection.
+   */
+  readonly rejects: <$Constructor extends AnyConstructor>(
+    constructor: $Constructor,
+    subject: PromiseLike<unknown> | (() => PromiseLike<unknown>),
+    label?: string,
+  ) => Promise<InstanceOf<$Constructor>>;
+};

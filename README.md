@@ -113,6 +113,45 @@ The scope carries `describe`, `it`, `test`, and the four hooks bound to that sui
 
 Declaring the parameter is the opt in, and an `async` callback without one throws `AsyncDescribeError` naming the suite — it has no way to address its registrations, and would file them at a shallower path. Once addressed, the thenable goes to the runner and each collects it as it always does (bun, vitest, rstest and `node:test` await it; jest rejects an `async` describe; mocha discards the tests inside one).
 
+## Assertions that narrow
+
+`expect(user.address).toBeDefined()` checks the value but cannot tell TypeScript about it: `expect(x)` returns a matcher object, and a method on that object has no way to narrow the `x` you passed in. So the next line reaches for `!`, `?.` or a cast. `initialize` also returns `attest`, a set of assertions that each narrow in one call, bound to your runner's own `expect`:
+
+```ts
+import { initialize, type Attest } from "@ghostry/harness";
+import * as framework from "bun:test";
+
+export const harness = initialize({ framework, integrations });
+export const { describe, it, expect } = harness;
+export const attest: Attest = harness.attest;
+```
+
+The annotated line is required. TypeScript narrows through an assertion only when every name in the call is declared with an explicit type, and that means your binding, not the library's. A destructure never qualifies, even an annotated one, and neither does `harness.attest.definite(…)`. Get it wrong and the call is a compile error (TS2775), never a silent loss of narrowing. One line in the shared setup module covers every test file that imports it.
+
+| member                          | on success                                                    |
+| ------------------------------- | ------------------------------------------------------------- |
+| `definite(value)`               | narrows `value` to neither `null` nor `undefined`             |
+| `definitely(value)`             | returns `value`, typed the same way, for use in an expression |
+| `instanceOf(value, Class)`      | narrows `value` to an instance of `Class`                     |
+| `variant(value, "kind", "err")` | narrows a discriminated union to its `kind: "err"` member     |
+| `that(value, isFoo)`            | narrows `value` through your own type guard                   |
+| `throws(Class, () => …)`        | returns what the function threw, as an instance of `Class`    |
+| `rejects(Class, promise)`       | resolves to the rejection reason, as an instance of `Class`   |
+
+```ts
+const error = attest.throws(HarnessError.EachTableError, () => it.each([]));
+expect(error.reason).toBe("empty");
+
+attest.variant(event, "kind", "err");
+expect(event.message).toBe("timed out");
+
+expect(attest.definitely(users[0]).name).toBe("Ada");
+```
+
+`definite` passes `0`, `""` and `false`: only `null` and `undefined` fail, since those are what `NonNullable` removes. `definitely`, `throws`, and `rejects` return their result rather than asserting it, so they need no annotation and work off a plain destructure too. `throws` runs your function exactly once, and fails if it returns a promise, which is `rejects`' job; `rejects` takes a promise or a function returning one, and counts a synchronous throw from that function as a rejection. Members that check a value take it first, so `instanceOf(value, Class)` reads as the sentence it asserts; `throws` and `rejects` take the class first, so a multi-line function sits last where callbacks go. Every member takes an optional trailing `label` naming the subject, which appears in the failure.
+
+A failure is your runner's own. Each member first calls the matching matcher (`toBeDefined`, `toBeInstanceOf`, `toThrow`, `rejects.toThrow`, …) so you get the runner's message and diff, then checks again itself and throws `HarnessError.AttestationError` if the runner let it through. That second check is what makes the narrowing sound on a runner whose `expect` lacks the matcher or does not throw. On bun, the source excerpt of a failure points into this package rather than at your line: bun excerpts the line that threw, which is the matcher call inside `attest`. The stack trace below it still names your line.
+
 ## Rewriting an integration's keys
 
 An integration names the keys it contributes, and by default you take them as it ships them. `remap` wraps one integration and rewrites that map — rename a key, lift a nested value to the root, drop one you do not want, or add one of your own:

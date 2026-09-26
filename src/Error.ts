@@ -353,4 +353,45 @@ export namespace HarnessError {
         + `  actual:   ${actual}`;
     }
   }
+
+  /**
+   * An `attest` check failed and the runner's own `expect` did not already
+   * throw for it — its matcher was missing, or it does not throw on failure.
+   * Also thrown, and handed to the runner's matcher, when a thunk given to
+   * `attest.throws` returns a thenable, since that is `attest.rejects`' job.
+   *
+   * `cause` is the error the subject actually threw or rejected with, when it
+   * threw the wrong thing, so that failure is not lost behind this one.
+   */
+  export class AttestationError extends HarnessError {
+    constructor(
+      /**
+       * The `attest` member that failed, e.g. `"definite"`.
+       */
+      public readonly attestation: string,
+      /**
+       * The caller's name for the subject, if one was given.
+       */
+      public readonly label: string | undefined,
+      /**
+       * What the check required, rendered for display.
+       */
+      public readonly expected: string,
+      /**
+       * What it got instead, rendered for display.
+       */
+      public readonly actual: string,
+      /**
+       * What the subject threw or rejected with, when that was the problem.
+       */
+      public readonly cause?: unknown,
+    ) {
+      super();
+      this.name = "AttestationError";
+      this.message =
+        `attest.${attestation}${label === undefined ? "" : ` (${label})`} failed.\n`
+        + `  expected: ${expected}\n`
+        + `  actual:   ${actual}`;
+    }
+  }
 }

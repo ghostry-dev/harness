@@ -17,3 +17,19 @@ export type UnionToIntersection<$Union> = (
  * `never` is the bottom type).
  */
 export type AnyFn = (...args: never[]) => unknown;
+
+/**
+ * Any class, abstract ones included. Parameters are `never` for the same reason
+ * as {@link AnyFn}: every constructor is assignable to it, whatever it takes.
+ */
+export type AnyConstructor = abstract new (...args: never) => unknown;
+
+/**
+ * What `new $Constructor(…)` produces. Derived with `infer` rather than the
+ * built-in `InstanceType`, whose `any`-parameter bound {@link AnyConstructor}
+ * does not satisfy.
+ */
+export type InstanceOf<$Constructor extends AnyConstructor> =
+  $Constructor extends abstract new (...args: never) => infer $Instance
+    ? $Instance
+    : never;

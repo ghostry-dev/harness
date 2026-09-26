@@ -42,7 +42,7 @@ export function describe(
     bindOwner: object,
     modifiers: ReadonlyArray<string>,
   ): AnyDescribeSurface => {
-    const key = modifiers.join(',');
+    const key = modifiers.join(",");
     const cached = local.get(key);
     if (typeof cached !== "undefined") return cached;
 

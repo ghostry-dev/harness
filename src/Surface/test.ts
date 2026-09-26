@@ -32,7 +32,7 @@ export function test(
     bindOwner: object,
     modifiers: ReadonlyArray<string>,
   ): AnyTestSurface => {
-    const key = modifiers.join(',');
+    const key = modifiers.join(",");
     const cached = local.get(key);
     if (typeof cached !== "undefined") return cached;
 

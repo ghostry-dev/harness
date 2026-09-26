@@ -1,3 +1,4 @@
+import { attestations } from "./Attest";
 import { ROW_KEY } from "./Each";
 import { HarnessError } from "./Error";
 import type { Framework } from "./Framework/Types";
@@ -91,11 +92,14 @@ export function initialize<
     };
   };
 
+  const expect = bound(framework.expect, framework);
+
   return {
     describe: describe(framework.describe, framework, cursor, scopeFor),
     it,
     test: it,
-    expect: bound(framework.expect, framework),
+    expect,
+    attest: attestations(expect),
     framework,
     ...hookMembers(framework, cursor, integrations, registry),
     /**

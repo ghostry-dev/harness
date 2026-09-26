@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { attest } from "./fixtures/attest";
 
 const DIST = new URL("../dist/esm/", import.meta.url).pathname;
 
@@ -19,7 +20,7 @@ function walk(dir: string): string[] {
  */
 function externalImports(source: string): string[] {
   return [...source.matchAll(/\bfrom\s*"([^"]+)"/g)]
-    .map((match) => match[1]!)
+    .map((match) => attest.definitely(match[1], "import specifier"))
     .filter(
       (specifier) => !specifier.startsWith(".") && !specifier.startsWith("#"),
     );

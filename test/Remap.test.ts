@@ -6,7 +6,8 @@ import {
   type RemapOptions,
 } from "@ghostry/harness";
 import { expect, test } from "bun:test";
-import { invoke, recordingFramework, testsOf } from "./fixtures/framework";
+import { attest } from "./fixtures/attest";
+import { invoke, recordingFramework, testAt } from "./fixtures/framework";
 
 type ExternContext = { extern: { mock: string }; spare: number };
 
@@ -17,20 +18,20 @@ type ExternContext = { extern: { mock: string }; spare: number };
  */
 function extern(): {
   readonly integration: Integration<ExternContext>;
-  readonly calls: Record<string, number>;
+  readonly calls: { extern: number; spare: number };
 } {
-  const calls: Record<string, number> = { extern: 0, spare: 0 };
+  const calls = { extern: 0, spare: 0 };
   return {
     calls,
     integration: {
       name: "extern",
       provides: {
         extern: () => {
-          calls["extern"] = calls["extern"]! + 1;
+          calls.extern += 1;
           return { mock: "m" };
         },
         spare: () => {
-          calls["spare"] = calls["spare"]! + 1;
+          calls.spare += 1;
           return 1;
         },
       },
@@ -59,11 +60,12 @@ test("remap renames, lifts, drops and adds in one rewriting", () => {
     seen = context;
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
+  attest.definite(seen);
   expect(seen).toEqual({ mock: "m", mocking: { mock: "m" }, helper: "h" });
-  expect(Object.keys(seen!)).not.toContain("spare");
-  expect(Object.keys(seen!)).not.toContain("extern");
+  expect(Object.keys(seen)).not.toContain("spare");
+  expect(Object.keys(seen)).not.toContain("extern");
 });
 
 /**
@@ -94,10 +96,11 @@ test("every wrapped provider runs exactly once per test, however many rewritten 
     seen = context;
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(calls).toEqual({ extern: 1, spare: 1 });
-  expect(seen!.a).toBe(seen!.b as never);
+  attest.definite(seen);
+  expect(seen.a).toBe(seen.b as never);
 });
 
 /**
@@ -122,7 +125,7 @@ test("the memo does not survive between two invocations of one registered test",
     seen.push(context.a);
   });
 
-  const registered = testsOf(framework)[0]!;
+  const registered = testAt(framework);
   invoke(registered);
   invoke(registered);
 
@@ -166,10 +169,11 @@ test("a wrapped frame still runs, and what it established reaches the rewritten 
     seen = context;
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
-  expect(seen!.connection).toBe(opened);
-  expect(seen!.direct).toBe(opened);
+  attest.definite(seen);
+  expect(seen.connection).toBe(opened);
+  expect(seen.direct).toBe(opened);
   expect(log).toEqual(["enter", "body", "leave"]);
 });
 
@@ -211,7 +215,7 @@ test("a `frame` written as a method keeps its `this` through a remap", () => {
   });
 
   it("leaf", () => {});
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(seen).toEqual(["kept"]);
 });
@@ -253,7 +257,7 @@ test("remapping resolves a collision between two integrations that both claim a 
     seen = context;
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(seen).toEqual({ db: "first", otherDb: "second" });
 });
@@ -344,12 +348,14 @@ test("a wrapped integration's pollution key lands as an own property of `provide
   });
 
   it("leaf", () => {});
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
-  expect(Object.getPrototypeOf(captured!)).toBe(Object.prototype);
-  expect(Object.getOwnPropertyDescriptor(captured!, "__proto__")?.value).toBe(
-    "smuggled",
+  attest.definite(captured);
+  expect(Object.getPrototypeOf(captured)).toBe(Object.prototype);
+  const descriptor = attest.definitely(
+    Object.getOwnPropertyDescriptor(captured, "__proto__"),
   );
+  expect(descriptor.value).toBe("smuggled");
   expect(({} as Record<string, unknown>)["smuggled"]).toBeUndefined();
 });
 
@@ -383,7 +389,7 @@ test("an empty remapping contributes nothing and runs no wrapped provider, but i
     seen = context;
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(seen).toEqual({});
   expect(calls).toBe(0);
@@ -407,7 +413,7 @@ test("remaps compose", () => {
     seen = context;
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(seen).toEqual({ mock: "m" });
 });

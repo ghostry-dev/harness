@@ -7,11 +7,13 @@ import {
 } from "@ghostry/harness";
 import { expect, spyOn, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { attest } from "./fixtures/attest";
 import {
   chainingFramework,
   invoke,
   recordingFramework,
   recordingFrameworkWithoutSuiteHooks,
+  testAt,
   testsOf,
 } from "./fixtures/framework";
 
@@ -62,7 +64,7 @@ test("integrations compose outside-in, index 0 outermost", () => {
     });
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(log).toEqual([
     "outer:enter",
@@ -95,7 +97,7 @@ test("each integration's context merges into one object handed to the body", () 
     });
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(seen).toEqual({ left: 1, right: "x" });
 });
@@ -128,7 +130,7 @@ test("a provider sees state its own integration's frame already established", ()
     seen = context;
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(seen).toEqual({ rows: 1 });
   expect(transactionOpen).toBe(false);
@@ -144,11 +146,9 @@ test("initialize throws on a pollution key, eagerly", () => {
       initialize({ framework, integrations: [tracing("probe", [key], [])] });
       throw new Error(`expected PrototypePollutionError for ${key}`);
     } catch (error) {
-      expect(error).toBeInstanceOf(HarnessError.PrototypePollutionError);
-      if (error instanceof HarnessError.PrototypePollutionError) {
-        expect(error.key).toBe(key);
-        expect(error.integration).toBe("probe");
-      }
+      attest.instanceOf(error, HarnessError.PrototypePollutionError);
+      expect(error.key).toBe(key);
+      expect(error.integration).toBe("probe");
     }
   }
   expect(framework.calls).toEqual([]);
@@ -202,23 +202,18 @@ test("initialize throws on a keys collision across integrations, eagerly", () =>
     }),
   ).toThrow(HarnessError.IntegrationKeyCollisionError);
 
-  try {
+  const error = attest.throws(HarnessError.IntegrationKeyCollisionError, () =>
     initialize({
       framework,
       integrations: [
         tracing("first", ["shared"], []),
         tracing("second", ["shared"], []),
       ],
-    });
-    throw new Error("expected IntegrationKeyCollisionError");
-  } catch (error) {
-    expect(error).toBeInstanceOf(HarnessError.IntegrationKeyCollisionError);
-    if (error instanceof HarnessError.IntegrationKeyCollisionError) {
-      expect(error.key).toBe("shared");
-      expect(error.first).toBe("first");
-      expect(error.second).toBe("second");
-    }
-  }
+    }),
+  );
+  expect(error.key).toBe("shared");
+  expect(error.first).toBe("first");
+  expect(error.second).toBe("second");
 
   expect(framework.calls).toEqual([]);
 });
@@ -231,9 +226,9 @@ test("the function handed to the runner has length 0", () => {
     it("leaf", () => {});
   });
 
-  const registered = testsOf(framework)[0]!.fn;
+  const registered = attest.definitely(testAt(framework).fn);
   expect(registered).toBeFunction();
-  expect(registered!.length).toBe(0);
+  expect(registered.length).toBe(0);
 });
 
 /**
@@ -300,11 +295,12 @@ test("a throwing describe block still restores the cursor, so later tests see th
     it("after throw", () => {});
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(identities).toHaveLength(1);
-  expect(identities[0]!.path).toEqual(["outer"]);
-  expect(identities[0]!.name).toBe("after throw");
+  const identity = attest.definitely(identities[0]);
+  expect(identity.path).toEqual(["outer"]);
+  expect(identity.name).toBe("after throw");
 });
 
 test("an async describe callback throws, and still restores the cursor", () => {
@@ -319,17 +315,15 @@ test("an async describe callback throws, and still restores the cursor", () => {
     try {
       describe("inner", async () => {});
     } catch (error) {
-      expect(error).toBeInstanceOf(HarnessError.AsyncDescribeError);
-      if (error instanceof HarnessError.AsyncDescribeError) {
-        expect(error.suite).toBe("inner");
-      }
+      attest.instanceOf(error, HarnessError.AsyncDescribeError);
+      expect(error.suite).toBe("inner");
     }
     it("after async", () => {});
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
-  expect(identities[0]!.path).toEqual(["outer"]);
+  expect(attest.definitely(identities[0]).path).toEqual(["outer"]);
 });
 
 /**
@@ -347,7 +341,7 @@ test("the runner's `this` reaches the test body", () => {
     seen = this;
   });
 
-  invoke(testsOf(framework)[0]!, runnerContext);
+  invoke(testAt(framework), runnerContext);
 
   expect(seen).toBe(runnerContext);
 });
@@ -380,10 +374,10 @@ test("a describe callback receives both the runner's `this` and its scope", () =
     it("addressed", () => {});
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(seen).toBe(runnerContext);
-  expect(identities[0]!.path).toEqual(["suite"]);
+  expect(attest.definitely(identities[0]).path).toEqual(["suite"]);
 });
 
 test("forwarding `this` leaves the registered body at arity 0", () => {
@@ -394,7 +388,7 @@ test("forwarding `this` leaves the registered body at arity 0", () => {
 
   // A runner reads fn.length to choose promise completion over `done`; a
   // `this` parameter is erased, so it must not push the arity to 1.
-  expect(testsOf(framework)[0]!.fn!.length).toBe(0);
+  expect(attest.definitely(testAt(framework).fn).length).toBe(0);
 });
 
 test("a body called with no receiver still runs", () => {
@@ -406,7 +400,7 @@ test("a body called with no receiver still runs", () => {
     ran = true;
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(ran).toBe(true);
 });
@@ -461,9 +455,9 @@ test("a scope parameter is accepted on a synchronous describe too", () => {
     it("addressed", () => {});
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
-  expect(identities[0]!.path).toEqual(["outer"]);
+  expect(attest.definitely(identities[0]).path).toEqual(["outer"]);
 });
 
 test("an addressed describe hands the thenable back to the runner", () => {
@@ -474,11 +468,12 @@ test("an addressed describe hands the thenable back to the runner", () => {
     await Promise.resolve();
   });
 
-  const registered = framework.calls.find((call) => call.kind === "describe");
-  expect(registered).toBeDefined();
+  const registered = attest.definitely(
+    framework.calls.find((call) => call.kind === "describe"),
+  );
   // The stand-in records the wrapper; invoking it returns what the wrapper
   // returned to the runner, which for an addressed suite is the thenable.
-  expect(invoke(registered!)).toBeInstanceOf(Promise);
+  expect(invoke(registered)).toBeInstanceOf(Promise);
 });
 
 test("an unaddressed describe returns undefined, never a value", () => {
@@ -487,8 +482,10 @@ test("an unaddressed describe returns undefined, never a value", () => {
 
   describe("suite", () => {});
 
-  const registered = framework.calls.find((call) => call.kind === "describe");
-  expect(invoke(registered!)).toBeUndefined();
+  const registered = attest.definitely(
+    framework.calls.find((call) => call.kind === "describe"),
+  );
+  expect(invoke(registered)).toBeUndefined();
 });
 
 test("a thenable return from describe throws the same as async", () => {
@@ -515,7 +512,7 @@ test("identity is captured at registration, not at invocation", () => {
   });
 
   expect(identities).toEqual([]);
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(identities).toHaveLength(1);
   expect(identities[0]).toEqual({
@@ -569,16 +566,16 @@ test(".only/.skip/.todo forward to the framework and still wrap the body", () =>
     ["it", "todo", "todo-without-body"],
   ]);
 
-  invoke(testsOf(framework)[0]!);
-  invoke(testsOf(framework)[1]!);
-  invoke(testsOf(framework)[2]!);
+  invoke(testAt(framework));
+  invoke(testAt(framework, 1));
+  invoke(testAt(framework, 2));
 
   expect(identities.map((identity) => identity.name)).toEqual([
     "only-test",
     "skip-test",
     "todo-test",
   ]);
-  expect(identities[0]!.path).toEqual(["only-suite"]);
+  expect(attest.definitely(identities[0]).path).toEqual(["only-suite"]);
 });
 
 test("it.each registers one test per row with identity.row and context.row", () => {
@@ -602,17 +599,17 @@ test("it.each registers one test per row with identity.row and context.row", () 
     "adds 1 and 2",
     "adds 3 and 4",
   ]);
-  expect(recorded[0]!.fn!.length).toBe(0);
+  expect(attest.definitely(testAt(framework).fn).length).toBe(0);
 
-  invoke(recorded[0]!);
-  invoke(recorded[1]!);
+  invoke(testAt(framework));
+  invoke(testAt(framework, 1));
 
   expect(seen).toEqual([
     [1, 2],
     [3, 4],
   ]);
   expect(identities.map((identity) => identity.row)).toEqual([0, 1]);
-  expect(identities[0]!.name).toBe("adds 1 and 2");
+  expect(attest.definitely(identities[0]).name).toBe("adds 1 and 2");
 });
 
 /**
@@ -646,7 +643,7 @@ test("it.each inserts a row value containing $& verbatim", () => {
 
   it.each([{ a: "x$&y" }])("$a", () => {});
 
-  expect(testsOf(framework)[0]!.name).toBe("x$&y");
+  expect(testAt(framework).name).toBe("x$&y");
 });
 
 /**
@@ -659,7 +656,7 @@ test("it.each runs printf codes for object rows, including %%", () => {
 
   it.each([{ a: 1 }])("100%% of %s for $a", () => {});
 
-  expect(testsOf(framework)[0]!.name).toBe('100% of {"a":1} for 1');
+  expect(testAt(framework).name).toBe('100% of {"a":1} for 1');
 });
 
 test("it.each %i truncates, %d and %f do not", () => {
@@ -668,7 +665,7 @@ test("it.each %i truncates, %d and %f do not", () => {
 
   it.each([[1.7, 1.7, 1.7]])("%i %d %f", () => {});
 
-  expect(testsOf(framework)[0]!.name).toBe("1 1.7 1.7");
+  expect(testAt(framework).name).toBe("1 1.7 1.7");
 });
 
 /**
@@ -692,34 +689,23 @@ test("it.each rejects a table that would register no tests", () => {
   ).toThrow(HarnessError.EachTableError);
   expect(framework.calls).toEqual([]);
 
-  try {
-    it.each([]);
-    throw new Error("expected EachTableError");
-  } catch (error) {
-    expect(error).toBeInstanceOf(HarnessError.EachTableError);
-    if (error instanceof HarnessError.EachTableError) {
-      expect(error.reason).toBe("empty");
-    }
-  }
+  const error = attest.throws(HarnessError.EachTableError, () => it.each([]));
+  expect(error.reason).toBe("empty");
 });
 
 test("it.each rejects a tagged table whose last row is short of its headings", () => {
   const framework = recordingFramework();
   const { it } = initialize({ framework });
 
-  try {
-    it.each`
+  const error = attest.throws(
+    HarnessError.EachTableError,
+    () => it.each`
       a    | b
       ${1} | ${2}
       ${3}
-    `;
-    throw new Error("expected EachTableError");
-  } catch (error) {
-    expect(error).toBeInstanceOf(HarnessError.EachTableError);
-    if (error instanceof HarnessError.EachTableError) {
-      expect(error.reason).toBe("incomplete");
-    }
-  }
+    `,
+  );
+  expect(error.reason).toBe("incomplete");
   expect(framework.calls).toEqual([]);
 });
 
@@ -732,16 +718,11 @@ test("it.each rejects a tagged table whose last row is short of its headings", (
 test("initialize throws on an integration contributing `row`, eagerly", () => {
   const framework = recordingFramework();
 
-  try {
-    initialize({ framework, integrations: [tracing("probe", ["row"], [])] });
-    throw new Error("expected ReservedContextKeyError");
-  } catch (error) {
-    expect(error).toBeInstanceOf(HarnessError.ReservedContextKeyError);
-    if (error instanceof HarnessError.ReservedContextKeyError) {
-      expect(error.key).toBe("row");
-      expect(error.integration).toBe("probe");
-    }
-  }
+  const error = attest.throws(HarnessError.ReservedContextKeyError, () =>
+    initialize({ framework, integrations: [tracing("probe", ["row"], [])] }),
+  );
+  expect(error.key).toBe("row");
+  expect(error.integration).toBe("probe");
   expect(framework.calls).toEqual([]);
 });
 
@@ -757,7 +738,7 @@ test("it.skip.each and it.todo.each expand, body omitted", () => {
     ["skip", "skipped 2"],
     ["todo", "todo 3"],
   ]);
-  expect(testsOf(framework)[2]!.fn).toBeUndefined();
+  expect(testAt(framework, 2).fn).toBeUndefined();
 });
 
 test("it.todoIf and it.failingIf choose a surface from the condition", () => {
@@ -800,16 +781,11 @@ test("a *If gate throws when the framework exposes no modifier that can honour i
     failingIf(condition: boolean): unknown;
   };
 
-  try {
-    it.skipIf(true);
-    throw new Error("expected ModifierUnsupportedError");
-  } catch (error) {
-    expect(error).toBeInstanceOf(HarnessError.ModifierUnsupportedError);
-    if (error instanceof HarnessError.ModifierUnsupportedError) {
-      expect(error.modifier).toBe("skipIf");
-      expect(error.wanted).toEqual(["skip", "todo"]);
-    }
-  }
+  const error = attest.throws(HarnessError.ModifierUnsupportedError, () =>
+    it.skipIf(true),
+  );
+  expect(error.modifier).toBe("skipIf");
+  expect(error.wanted).toEqual(["skip", "todo"]);
   expect(() => it.failingIf(true)).toThrow(
     HarnessError.ModifierUnsupportedError,
   );
@@ -900,8 +876,8 @@ test("it.each tagged template fills row from headings and values", () => {
 
   const recorded = testsOf(framework);
   expect(recorded.map((call) => call.name)).toEqual(["1 and 2", "3 and 4"]);
-  invoke(recorded[0]!);
-  invoke(recorded[1]!);
+  invoke(testAt(framework));
+  invoke(testAt(framework, 1));
   expect(seen).toEqual([
     { a: 1, b: 2 },
     { a: 3, b: 4 },
@@ -949,8 +925,8 @@ test("it.failing and it.concurrent forward to the framework", () => {
     ["concurrent", "parallel"],
   ]);
 
-  invoke(testsOf(framework)[0]!);
-  invoke(testsOf(framework)[1]!);
+  invoke(testAt(framework));
+  invoke(testAt(framework, 1));
   expect(identities.map((identity) => identity.name)).toEqual([
     "will fail",
     "parallel",
@@ -1058,7 +1034,7 @@ test("it.each forwards extra arguments after the body", () => {
 
   it.each([1])("timed", () => {}, 1_000);
 
-  expect(testsOf(framework)[0]!.rest).toEqual([1_000]);
+  expect(testAt(framework).rest).toEqual([1_000]);
 });
 
 test("`enterFrame` returns the body's value, including a promise", async () => {
@@ -1077,10 +1053,9 @@ test("`enterFrame` returns the body's value, including a promise", async () => {
     });
   });
 
-  const recorded = testsOf(framework);
-  expect(invoke(recorded[0]!)).toBe(7);
+  expect(invoke(testAt(framework))).toBe(7);
 
-  const promised = invoke(recorded[1]!);
+  const promised = invoke(testAt(framework, 1));
   expect(promised).toBeInstanceOf(Promise);
   expect(await promised).toBe(11);
 });
@@ -1095,7 +1070,7 @@ test("empty integrations still invoke the body with an empty context", () => {
     return "ok";
   });
 
-  expect(invoke(testsOf(framework)[0]!)).toBe("ok");
+  expect(invoke(testAt(framework))).toBe("ok");
   expect(seen).toEqual({});
 });
 
@@ -1105,7 +1080,7 @@ test("extra arguments after the body are forwarded to the runner", () => {
 
   it("timed", () => {}, 1_000);
 
-  expect(testsOf(framework)[0]!.rest).toEqual([1_000]);
+  expect(testAt(framework).rest).toEqual([1_000]);
 });
 
 function settingUp(
@@ -1177,7 +1152,7 @@ test("cleanups run inner-first across integrations", () => {
     log.push("body");
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(log).toEqual([
     "outer:setup",
@@ -1215,13 +1190,9 @@ test("cleanup receives `{ ok: true }` on pass and `{ ok: false, error }` on fail
     throw boom;
   });
 
-  invoke(testsOf(framework)[0]!);
-  try {
-    invoke(testsOf(framework)[1]!);
-    throw new Error("expected the failing body to throw");
-  } catch (error) {
-    expect(error).toBe(boom);
-  }
+  invoke(testAt(framework));
+  const error = attest.throws(Error, () => invoke(testAt(framework, 1)));
+  expect(error).toBe(boom);
 
   expect(passed).toEqual([{ ok: true }]);
   expect(failed).toEqual([{ ok: false, error: boom }]);
@@ -1236,7 +1207,7 @@ test("a synchronous body with synchronous cleanup stays synchronous", () => {
 
   it("leaf", () => 7);
 
-  const result = invoke(testsOf(framework)[0]!);
+  const result = invoke(testAt(framework));
   expect(result).not.toBeInstanceOf(Promise);
   expect(result).toBe(7);
 });
@@ -1265,7 +1236,7 @@ test("a synchronous body with async cleanup is promoted to a promise", async () 
     return 7;
   });
 
-  const result = invoke(testsOf(framework)[0]!);
+  const result = invoke(testAt(framework));
   expect(result).toBeInstanceOf(Promise);
   expect(await result).toBe(7);
   expect(log).toEqual([
@@ -1303,7 +1274,7 @@ test("an async frame's setup completes before that integration's providers run",
     log.push("body");
   });
 
-  const result = invoke(testsOf(framework)[0]!);
+  const result = invoke(testAt(framework));
   expect(result).toBeInstanceOf(Promise);
   await result;
   expect(log).toEqual(["setup:start", "setup:end", "provide", "body"]);
@@ -1344,7 +1315,7 @@ test("an async frame's teardown runs when it is the outermost integration", asyn
     log.push("body");
   });
 
-  await invoke(testsOf(framework)[0]!);
+  await invoke(testAt(framework));
 
   expect(log).toEqual([
     "async-outer:setup",
@@ -1367,7 +1338,7 @@ test("an async frame's teardown runs when a synchronous integration wraps it", a
     log.push("body");
   });
 
-  await invoke(testsOf(framework)[0]!);
+  await invoke(testAt(framework));
 
   expect(log).toEqual([
     "sync:setup",
@@ -1391,7 +1362,7 @@ test("an async frame's teardown still runs when the body throws", async () => {
     throw failure;
   });
 
-  await expect(invoke(testsOf(framework)[0]!)).rejects.toThrow(failure);
+  await expect(invoke(testAt(framework))).rejects.toThrow(failure);
 
   expect(log).toEqual(["async-outer:setup", "async-outer:cleanup"]);
 });
@@ -1425,13 +1396,10 @@ test("a throwing cleanup does not prevent its siblings from running", () => {
   const error = spyOn(console, "error");
   error.mockImplementation(() => {});
   try {
-    invoke(testsOf(framework)[0]!);
-    throw new Error("expected AggregateError");
-  } catch (thrown) {
-    expect(thrown).toBeInstanceOf(AggregateError);
-    if (thrown instanceof AggregateError) {
-      expect(thrown.errors).toEqual([innerError, outerError]);
-    }
+    const thrown = attest.throws(AggregateError, () =>
+      invoke(testAt(framework)),
+    );
+    expect(thrown.errors).toEqual([innerError, outerError]);
   } finally {
     error.mockRestore();
   }
@@ -1468,15 +1436,12 @@ test("cleanup errors are collected into an AggregateError, logged, and thrown on
   const error = spyOn(console, "error");
   error.mockImplementation(() => {});
   try {
-    invoke(testsOf(framework)[0]!);
-    throw new Error("expected AggregateError");
-  } catch (thrown) {
-    expect(thrown).toBeInstanceOf(AggregateError);
-    if (thrown instanceof AggregateError) {
-      expect(thrown.errors).toEqual([cleanupError]);
-    }
+    const thrown = attest.throws(AggregateError, () =>
+      invoke(testAt(framework)),
+    );
+    expect(thrown.errors).toEqual([cleanupError]);
     expect(error).toHaveBeenCalledTimes(1);
-    expect(error.mock.calls[0]![0]).toBe(thrown);
+    expect(attest.definitely(error.mock.calls[0])[0]).toBe(thrown);
   } finally {
     error.mockRestore();
   }
@@ -1506,16 +1471,12 @@ test("a failing test's error propagates unmodified even when cleanup also throws
   const error = spyOn(console, "error");
   error.mockImplementation(() => {});
   try {
-    invoke(testsOf(framework)[0]!);
-    throw new Error("expected the body error");
-  } catch (thrown) {
+    const thrown = attest.throws(Error, () => invoke(testAt(framework)));
     expect(thrown).toBe(boom);
     expect(error).toHaveBeenCalledTimes(1);
-    const logged = error.mock.calls[0]![0];
-    expect(logged).toBeInstanceOf(AggregateError);
-    if (logged instanceof AggregateError) {
-      expect(logged.errors).toEqual([cleanupError]);
-    }
+    const logged = attest.definitely(error.mock.calls[0])[0];
+    attest.instanceOf(logged, AggregateError);
+    expect(logged.errors).toEqual([cleanupError]);
   } finally {
     error.mockRestore();
   }
@@ -1553,9 +1514,9 @@ test("an async frame that does not catch passes the body's error through, silent
   const error = spyOn(console, "error");
   error.mockImplementation(() => {});
   try {
-    await invoke(testsOf(framework)[0]!);
-    throw new Error("expected the body error");
-  } catch (thrown) {
+    const thrown = await attest.rejects(Error, async () =>
+      invoke(testAt(framework)),
+    );
     expect(thrown).toBe(boom);
     expect(error).not.toHaveBeenCalled();
     expect(log).toEqual(["teardown"]);
@@ -1589,16 +1550,14 @@ test("an async frame's own teardown error is still recorded when the body fails"
   const error = spyOn(console, "error");
   error.mockImplementation(() => {});
   try {
-    await invoke(testsOf(framework)[0]!);
-    throw new Error("expected the body error");
-  } catch (thrown) {
+    const thrown = await attest.rejects(Error, async () =>
+      invoke(testAt(framework)),
+    );
     expect(thrown).toBe(boom);
     expect(error).toHaveBeenCalledTimes(1);
-    const logged = error.mock.calls[0]![0];
-    expect(logged).toBeInstanceOf(AggregateError);
-    if (logged instanceof AggregateError) {
-      expect(logged.errors).toEqual([cleanupError]);
-    }
+    const logged = attest.definitely(error.mock.calls[0])[0];
+    attest.instanceOf(logged, AggregateError);
+    expect(logged.errors).toEqual([cleanupError]);
   } finally {
     error.mockRestore();
   }
@@ -1630,7 +1589,7 @@ test("a frame opens before its own providers and closes after the body", () => {
     log.push("body");
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(log).toEqual(["open", "provide", "body", "close"]);
 });
@@ -1680,7 +1639,7 @@ test("a wrapper that promotes a synchronous body still tears down inner-first", 
     log.push("body");
   });
 
-  const result = invoke(testsOf(framework)[0]!);
+  const result = invoke(testAt(framework));
   expect(result).toBeInstanceOf(Promise);
   await result;
 
@@ -1714,7 +1673,7 @@ test("a wrapper that returns the body's value unchanged keeps a sync body sync",
     return 7;
   });
 
-  const result = invoke(testsOf(framework)[0]!);
+  const result = invoke(testAt(framework));
   expect(result).not.toBeInstanceOf(Promise);
   expect(result).toBe(7);
   expect(log).toEqual(["body", "close"]);
@@ -1745,7 +1704,7 @@ test("beforeEach then body then afterEach, outer describe then inner", () => {
     });
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(log).toEqual([
     "outer:before",
@@ -1772,12 +1731,8 @@ test("afterEach runs on a throwing body and the body's error is what propagates"
     });
   });
 
-  try {
-    invoke(testsOf(framework)[0]!);
-    throw new Error("expected the body to throw");
-  } catch (error) {
-    expect(error).toBe(boom);
-  }
+  const error = attest.throws(Error, () => invoke(testAt(framework)));
+  expect(error).toBe(boom);
 
   expect(log).toEqual(["body", "after"]);
 });
@@ -1801,12 +1756,8 @@ test("afterEach runs when a beforeEach threw", () => {
     });
   });
 
-  try {
-    invoke(testsOf(framework)[0]!);
-    throw new Error("expected beforeEach to throw");
-  } catch (error) {
-    expect(error).toBe(boom);
-  }
+  const error = attest.throws(Error, () => invoke(testAt(framework)));
+  expect(error).toBe(boom);
 
   expect(log).toEqual(["before", "after"]);
 });
@@ -1834,7 +1785,9 @@ test(".skip and .todo run no hooks", () => {
     });
   });
 
-  invoke(testsOf(framework).find((call) => call.name === "live")!);
+  invoke(
+    attest.definitely(testsOf(framework).find((call) => call.name === "live")),
+  );
 
   expect(log).toEqual(["before", "body", "after"]);
 });
@@ -1857,10 +1810,10 @@ test("two same-named describe blocks keep separate hook lists", () => {
     it("b", () => {});
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
   expect(log).toEqual(["first"]);
   log.length = 0;
-  invoke(testsOf(framework)[1]!);
+  invoke(testAt(framework, 1));
   expect(log).toEqual(["second"]);
 });
 
@@ -1876,9 +1829,9 @@ test("two describe.each rows keep separate hook lists", () => {
     it("leaf", () => {});
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
   expect(log).toEqual([1]);
-  invoke(testsOf(framework)[1]!);
+  invoke(testAt(framework, 1));
   expect(log).toEqual([1, 2]);
 });
 
@@ -1896,7 +1849,7 @@ test("a beforeEach declared after an it in the same describe still applies", () 
     });
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(log).toEqual(["before", "body"]);
 });
@@ -1917,7 +1870,7 @@ test("an addressed async describe's beforeEach, taken off the scope, applies", a
   });
 
   await new Promise((resolve) => setTimeout(resolve, 0));
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(log).toEqual(["before", "body"]);
 });
@@ -1929,15 +1882,10 @@ test("a top-level beforeEach throws AmbientHookError", () => {
   expect(() => beforeEach(() => {})).toThrow(HarnessError.AmbientHookError);
   expect(() => afterEach(() => {})).toThrow(HarnessError.AmbientHookError);
 
-  try {
-    beforeEach(() => {});
-    throw new Error("expected AmbientHookError");
-  } catch (error) {
-    expect(error).toBeInstanceOf(HarnessError.AmbientHookError);
-    if (error instanceof HarnessError.AmbientHookError) {
-      expect(error.hook).toBe("beforeEach");
-    }
-  }
+  const error = attest.throws(HarnessError.AmbientHookError, () =>
+    beforeEach(() => {}),
+  );
+  expect(error.hook).toBe("beforeEach");
 });
 
 test("an ambient hook after an await in an addressed describe throws too", async () => {
@@ -1980,12 +1928,14 @@ test("beforeAll gets a suite identity, shared with afterAll in the same describe
     afterAll(() => {});
   });
 
-  const recorded = framework.calls.filter(
+  const [before, after] = framework.calls.filter(
     (call) => call.kind === "beforeAll" || call.kind === "afterAll",
   );
-  expect(recorded[0]!.fn!.length).toBe(0);
-  invoke(recorded[0]!);
-  invoke(recorded[1]!);
+  attest.definite(before, "beforeAll");
+  attest.definite(after, "afterAll");
+  expect(attest.definitely(before.fn).length).toBe(0);
+  invoke(before);
+  invoke(after);
 
   expect(identities).toHaveLength(2);
   expect(identities[0]).toEqual({
@@ -2019,8 +1969,12 @@ test("beforeAll receives its own context, not the test's", () => {
     });
   });
 
-  invoke(framework.calls.find((call) => call.kind === "beforeAll")!);
-  invoke(testsOf(framework)[0]!);
+  invoke(
+    attest.definitely(
+      framework.calls.find((call) => call.kind === "beforeAll"),
+    ),
+  );
+  invoke(testAt(framework));
 
   expect(allContext).toEqual({ n: 1 });
   expect(testContext).toEqual({ n: 1 });
@@ -2047,7 +2001,7 @@ test("integration setup runs before every user beforeEach, and its cleanup after
     });
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(log).toEqual([
     "probe:setup",
@@ -2075,7 +2029,7 @@ test("afterEach runs inside every integration's wrapper, like the body", () => {
     });
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(log).toEqual(["probe:enter", "body", "after", "probe:leave"]);
 });
@@ -2117,7 +2071,7 @@ test("an async afterEach sees the scope its integration's wrapper opened", async
     });
   });
 
-  await invoke(testsOf(framework)[0]!);
+  await invoke(testAt(framework));
 
   expect(seen).toEqual(["before:scoped", "body:scoped", "after:scoped"]);
 });
@@ -2159,7 +2113,7 @@ test("a frame's teardown sees the scope its own wrapper opened", async () => {
     seen.push(`body:${store.getStore()}`);
   });
 
-  await invoke(testsOf(framework)[0]!);
+  await invoke(testAt(framework));
 
   expect(seen).toEqual(["setup:scoped", "body:scoped", "cleanup:scoped"]);
 });
@@ -2188,7 +2142,7 @@ test("teardown still runs inner-first when every integration wraps", async () =>
     log.push("body");
   });
 
-  await invoke(testsOf(framework)[0]!);
+  await invoke(testAt(framework));
 
   expect(log).toEqual([
     "body",
@@ -2232,7 +2186,7 @@ test("a wrapper hands what it opened to the providers and to its teardown", asyn
     provided = context.conn;
   });
 
-  await invoke(testsOf(framework)[0]!);
+  await invoke(testAt(framework));
 
   expect(provided).toBe(opened);
   expect(seen).toEqual([opened]);
@@ -2256,7 +2210,7 @@ test("a frame that yields no wrapper leaves the established value `undefined`", 
   const { it } = initialize({ framework, integrations: [plain] });
 
   it("leaf", () => {});
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(seen).toEqual([undefined]);
 });
@@ -2287,7 +2241,7 @@ test("a frame runs its `finally` after a synchronous body", () => {
   const { it } = initialize({ framework, integrations: [generated] });
 
   it("leaf", () => void log.push("body"));
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(log).toEqual(["open", "body", "close"]);
 });
@@ -2314,7 +2268,7 @@ test("a frame runs its `finally` after an async body, not at the first await", a
     log.push("body");
   });
 
-  await invoke(testsOf(framework)[0]!);
+  await invoke(testAt(framework));
 
   expect(log).toEqual(["open", "body", "close"]);
 });
@@ -2341,7 +2295,7 @@ test("a failing body reaches a frame's `catch`, and still wins", async () => {
     throw boom;
   });
 
-  await expect(invoke(testsOf(framework)[0]!)).rejects.toBe(boom);
+  await expect(invoke(testAt(framework))).rejects.toBe(boom);
   expect(caught).toEqual([boom]);
 });
 
@@ -2366,13 +2320,10 @@ test("a frame that throws during teardown is collected like any cleanup", () => 
   const error = spyOn(console, "error");
   error.mockImplementation(() => {});
   try {
-    invoke(testsOf(framework)[0]!);
-    throw new Error("expected AggregateError");
-  } catch (thrown) {
-    expect(thrown).toBeInstanceOf(AggregateError);
-    if (thrown instanceof AggregateError) {
-      expect(thrown.errors).toEqual([teardown]);
-    }
+    const thrown = attest.throws(AggregateError, () =>
+      invoke(testAt(framework)),
+    );
+    expect(thrown.errors).toEqual([teardown]);
   } finally {
     error.mockRestore();
   }
@@ -2399,8 +2350,8 @@ test("an `async function*` frame works, and promotes the test", async () => {
 
   it("leaf", () => void log.push("body"));
 
-  const result = invoke(testsOf(framework)[0]!);
-  expect(typeof (result as PromiseLike<unknown>)?.then).toBe("function");
+  const result = invoke(testAt(framework));
+  attest.instanceOf(result, Promise);
   await result;
 
   expect(log).toEqual(["open", "body", "close"]);
@@ -2434,7 +2385,7 @@ test("frames and helper-built integrations interleave inner-first", async () => 
     log.push("body");
   });
 
-  await invoke(testsOf(framework)[0]!);
+  await invoke(testAt(framework));
 
   expect(log).toEqual([
     "mid:setup",
@@ -2462,7 +2413,7 @@ test("a `frame` that is not a generator raises `IntegrationFrameResultError`", (
 
   it("leaf", () => {});
 
-  expect(() => invoke(testsOf(framework)[0]!)).toThrow(
+  expect(() => invoke(testAt(framework))).toThrow(
     HarnessError.IntegrationFrameResultError,
   );
 });
@@ -2480,7 +2431,7 @@ test("the guard catches a `frame` written as a plain function", () => {
 
   it("leaf", () => {});
 
-  expect(() => invoke(testsOf(framework)[0]!)).toThrow(
+  expect(() => invoke(testAt(framework))).toThrow(
     HarnessError.IntegrationFrameResultError,
   );
 });
@@ -2504,7 +2455,7 @@ test("a `frame` that yields a value rather than a wrapper raises `IntegrationFra
 
   it("leaf", () => {});
 
-  expect(() => invoke(testsOf(framework)[0]!)).toThrow(
+  expect(() => invoke(testAt(framework))).toThrow(
     HarnessError.IntegrationFrameWrapperError,
   );
 });
@@ -2522,7 +2473,7 @@ test("a frame that yields without teardown passes the body's value through", () 
 
   it("leaf", () => 3);
 
-  expect(invoke(testsOf(framework)[0]!)).toBe(3);
+  expect(invoke(testAt(framework))).toBe(3);
 });
 
 test("a frame that yields twice raises `IntegrationFrameYieldError`", () => {
@@ -2542,15 +2493,12 @@ test("a frame that yields twice raises `IntegrationFrameYieldError`", () => {
   const error = spyOn(console, "error");
   error.mockImplementation(() => {});
   try {
-    invoke(testsOf(framework)[0]!);
-    throw new Error("expected AggregateError");
-  } catch (thrown) {
-    expect(thrown).toBeInstanceOf(AggregateError);
-    if (thrown instanceof AggregateError) {
-      expect(thrown.errors[0]).toBeInstanceOf(
-        HarnessError.IntegrationFrameYieldError,
-      );
-    }
+    const thrown = attest.throws(AggregateError, () =>
+      invoke(testAt(framework)),
+    );
+    expect(thrown.errors[0]).toBeInstanceOf(
+      HarnessError.IntegrationFrameYieldError,
+    );
   } finally {
     error.mockRestore();
   }
@@ -2583,13 +2531,10 @@ test("teardown errors from separate frames aggregate exactly once", async () => 
   const error = spyOn(console, "error");
   error.mockImplementation(() => {});
   try {
-    await invoke(testsOf(framework)[0]!);
-    throw new Error("expected AggregateError");
-  } catch (thrown) {
-    expect(thrown).toBeInstanceOf(AggregateError);
-    if (thrown instanceof AggregateError) {
-      expect(thrown.errors).toEqual([innerError, outerError]);
-    }
+    const thrown = await attest.rejects(AggregateError, async () =>
+      invoke(testAt(framework)),
+    );
+    expect(thrown.errors).toEqual([innerError, outerError]);
     expect(error).toHaveBeenCalledTimes(1);
   } finally {
     error.mockRestore();
@@ -2621,15 +2566,13 @@ test("a failing afterEach reaches integration cleanups as the test's failure", (
   try {
     let thrown: unknown;
     try {
-      invoke(testsOf(framework)[0]!);
+      invoke(testAt(framework));
     } catch (caught) {
       thrown = caught;
     }
 
-    expect(thrown).toBeInstanceOf(AggregateError);
-    if (thrown instanceof AggregateError) {
-      expect(thrown.errors).toEqual([afterError]);
-    }
+    attest.instanceOf(thrown, AggregateError);
+    expect(thrown.errors).toEqual([afterError]);
     expect(outcomes).toEqual([{ ok: false, error: thrown }]);
     expect(error).toHaveBeenCalledTimes(1);
   } finally {
@@ -2667,22 +2610,18 @@ test("when afterEach and an integration cleanup both throw on a passing test, th
   try {
     let thrown: unknown;
     try {
-      invoke(testsOf(framework)[0]!);
+      invoke(testAt(framework));
     } catch (caught) {
       thrown = caught;
     }
 
-    expect(thrown).toBeInstanceOf(AggregateError);
-    if (thrown instanceof AggregateError) {
-      expect(thrown.errors).toEqual([afterError]);
-    }
+    attest.instanceOf(thrown, AggregateError);
+    expect(thrown.errors).toEqual([afterError]);
     expect(error).toHaveBeenCalledTimes(2);
-    expect(error.mock.calls[0]![0]).toBe(thrown);
-    const logged = error.mock.calls[1]![0];
-    expect(logged).toBeInstanceOf(AggregateError);
-    if (logged instanceof AggregateError) {
-      expect(logged.errors).toEqual([cleanupError]);
-    }
+    expect(attest.definitely(error.mock.calls[0])[0]).toBe(thrown);
+    const logged = attest.definitely(error.mock.calls[1])[0];
+    attest.instanceOf(logged, AggregateError);
+    expect(logged.errors).toEqual([cleanupError]);
   } finally {
     error.mockRestore();
   }
@@ -2719,15 +2658,15 @@ test("context keys the library owns are non-writable, but the object is extensib
     });
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   /** ESM is always strict, so a blocked assignment throws rather than no-ops. */
   expect(thrown).toEqual(["db:TypeError", "row:TypeError"]);
-  expect(seen).toBeDefined();
-  expect((seen!.db as { n: number }).n).toBe(99);
-  expect(seen!.row).toEqual({ n: 7 });
-  expect(seen!.scratch).toBe("from the hook");
-  expect(Object.isExtensible(seen!)).toBe(true);
+  attest.definite(seen);
+  expect((seen.db as { n: number }).n).toBe(99);
+  expect(seen.row).toEqual({ n: 7 });
+  expect(seen.scratch).toBe("from the hook");
+  expect(Object.isExtensible(seen)).toBe(true);
 });
 
 test("hooks receive the same context object identity as the body", () => {
@@ -2756,7 +2695,7 @@ test("hooks receive the same context object identity as the body", () => {
     });
   });
 
-  invoke(testsOf(framework)[0]!);
+  invoke(testAt(framework));
 
   expect(beforeContext).toBe(bodyContext);
   expect(afterContext).toBe(bodyContext);
@@ -2774,8 +2713,8 @@ test("context.row is visible to hooks in an .each test", () => {
     it.each([10, 20])("n %s", () => {});
   });
 
-  invoke(testsOf(framework)[0]!);
-  invoke(testsOf(framework)[1]!);
+  invoke(testAt(framework));
+  invoke(testAt(framework, 1));
 
   expect(seen).toEqual([10, 20]);
 });
@@ -2797,7 +2736,7 @@ test("an async beforeEach promotes a synchronous body, and the test settles afte
     });
   });
 
-  const result = invoke(testsOf(framework)[0]!);
+  const result = invoke(testAt(framework));
   expect(result).toBeInstanceOf(Promise);
   expect(await result).toBe(7);
   expect(log).toEqual(["before:start", "before:end", "body"]);
@@ -2820,7 +2759,7 @@ test("two invocations of one registered body each run their own hooks", () => {
     });
   });
 
-  const recorded = testsOf(framework)[0]!;
+  const recorded = testAt(framework);
   invoke(recorded);
   invoke(recorded);
 
@@ -2845,6 +2784,8 @@ test("beforeAll forwards trailing arguments to the runner", () => {
     beforeAll(() => {}, { timeout: 1000 });
   });
 
-  const recorded = framework.calls.find((call) => call.kind === "beforeAll");
-  expect(recorded?.rest).toEqual([{ timeout: 1000 }]);
+  const recorded = attest.definitely(
+    framework.calls.find((call) => call.kind === "beforeAll"),
+  );
+  expect(recorded.rest).toEqual([{ timeout: 1000 }]);
 });

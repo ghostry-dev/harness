@@ -1,4 +1,5 @@
 import type { AnyFn } from "@ghostry/harness";
+import { attest } from "./attest";
 
 /**
  * A recorded `describe` or `it` call. `fn` is the function the wrapper handed
@@ -202,6 +203,15 @@ export function testsOf(
   framework: RecordingFramework,
 ): ReadonlyArray<RecordedCall> {
   return framework.calls.filter((call) => call.kind === "it");
+}
+
+/**
+ * The `index`th recorded `it`. A test that expected more registrations than
+ * happened fails here, naming the index, rather than receiving `undefined` and
+ * failing a line later on whatever dereferenced it.
+ */
+export function testAt(framework: RecordingFramework, index = 0): RecordedCall {
+  return attest.definitely(testsOf(framework)[index], `tests[${index}]`);
 }
 
 /**
