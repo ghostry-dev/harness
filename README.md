@@ -30,9 +30,10 @@ import { integration as fabricatorIntegration } from "@ghostry/fabricator/harnes
 import * as framework from "bun:test";
 
 /**
- * One fixed instant for the whole suite: every test and hook shares this
- * "now," and the test path alone varies the data. Without it the clock is the
- * wall-clock instant of this call, and the suite stops reproducing across runs.
+ * One fixed instant for the whole suite: every test and hook shares this "now,"
+ * and the test path alone varies the data. Without it the clock is the
+ * wall-clock instant of this call, and the suite stops reproducing across
+ * runs.
  */
 export const fabricator = initializeFabricator({
   clock: new Date("2024-01-01T00:00:00Z"),
@@ -43,6 +44,8 @@ export const { describe, it, expect } = initializeHarness({
   integrations: [fabricatorIntegration(fabricator)],
 });
 ```
+
+Put this in one setup module and import it from every test file. On bun, that requires 1.2.23 or later: earlier versions tie a module's `bun:test` import to the first test file that loads it, so every later file's tests are dropped with no error — with or without this library. On an older bun, export a function from the setup module that takes the framework and calls `initialize`, and have each test file pass in its own `import * as framework from "bun:test"`.
 
 `@ghostry/harness` depends on neither fabricator nor the runner. Integrations satisfy `{ name, provides, frame? }` structurally: `provides` is a map of context key to `({ identity, established }) => value` and is the only source of that integration's keys, so there is nothing to declare separately and nothing that could name a key the integration does not actually contribute.
 

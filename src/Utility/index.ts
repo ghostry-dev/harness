@@ -20,6 +20,37 @@ export function bound<$Fn extends AnyFn>(fn: $Fn, owner: object): $Fn {
   return fn.bind(owner) as $Fn;
 }
 
+/**
+ * {@link bound}, keeping the function's own members. `bind` returns a function
+ * carrying none of the original's own properties, so a bound `expect` loses
+ * `expect.any`, `expect.objectContaining`, `expect.extend` and the rest while
+ * its type, `$Fn`, still declares them: a call compiles and then throws.
+ *
+ * Each member is a getter reading through to `fn` rather than a copy, so a
+ * member the runner replaces later is seen here too. A member it adds later is
+ * not: the set of keys is fixed when this runs. `length` and `name` are the
+ * bound function's own already, and `prototype` describes `fn` as a
+ * constructor, which the bound function is not.
+ *
+ * Only for `expect`. A wrapped `describe`/`it` gets its modifiers installed by
+ * this package, which a forwarded getter of the same name would shadow.
+ */
+export function boundWithMembers<$Fn extends AnyFn>(
+  fn: $Fn,
+  owner: object,
+): $Fn {
+  const result = bound(fn, owner);
+  for (const key of Reflect.ownKeys(fn)) {
+    if (key === "length" || key === "name" || key === "prototype") continue;
+    Object.defineProperty(result, key, {
+      configurable: true,
+      enumerable: true,
+      get: () => fn[key as keyof $Fn],
+    });
+  }
+  return result;
+}
+
 const POLLUTION_KEYS = Object.freeze(
   new Set(["__proto__", "constructor", "prototype"]),
 );

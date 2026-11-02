@@ -5,6 +5,7 @@ import {
   type Identity,
   type Integration,
 } from "@ghostry/harness";
+import * as bun from "bun:test";
 import { expect, spyOn, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { attest } from "./fixtures/attest";
@@ -533,6 +534,37 @@ test("it and test are one implementation; expect is bound; framework is unchange
   const result = initialized.expect("value");
   expect(result.thisValue).toBe(framework);
   expect(result.args).toEqual(["value"]);
+});
+
+/**
+ * `bind` alone drops every own member of the function it binds, and a runner
+ * hangs its asymmetric matchers and `extend` off `expect` itself. Checked
+ * against real `bun:test`, since what matters is that the runner's own statics
+ * still work when called through the bound `expect`, not merely that they are
+ * present.
+ */
+test("expect keeps the runner's own members", () => {
+  const { expect: bound } = initialize({ framework: bun });
+
+  bound({ a: 1, b: 2 }).toEqual(bound.objectContaining({ a: 1 }));
+  bound({ a: 1 }).toEqual(bound.not.objectContaining({ a: 2 }));
+  bound([1, 2]).toEqual(bound.arrayContaining([2]));
+  bound(5).toEqual(bound.any(Number));
+  expect(bound.extend).toBe(bun.expect.extend);
+});
+
+test("expect reads a member the runner replaces after initialize", () => {
+  const framework = recordingFramework();
+  Object.assign(framework.expect, { member: () => "early" });
+  const initialized = initialize({ framework });
+
+  const late = () => "late";
+  Object.assign(framework.expect, { member: late });
+
+  expect((initialized.expect as unknown as { member: unknown }).member).toBe(
+    late,
+  );
+  expect(initialized.expect.name).toBe(framework.expect.bind(framework).name);
 });
 
 test(".only/.skip/.todo forward to the framework and still wrap the body", () => {

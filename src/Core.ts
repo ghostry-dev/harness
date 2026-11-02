@@ -7,7 +7,7 @@ import { hookMembers, type HookRegistry } from "./Surface/hooks";
 import { test } from "./Surface/test";
 import type { Cursor, Suite } from "./Surface/Types";
 import type { AnyIntegration, Initialized, InitializeOptions } from "./Types";
-import { bound, isPollutionKey } from "./Utility";
+import { boundWithMembers, isPollutionKey } from "./Utility";
 
 /**
  * `initialize({ integrations })` rejects a key collision, any pollution key
@@ -92,7 +92,7 @@ export function initialize<
     };
   };
 
-  const expect = bound(framework.expect, framework);
+  const expect = boundWithMembers(framework.expect, framework);
 
   return {
     describe: describe(framework.describe, framework, cursor, scopeFor),
