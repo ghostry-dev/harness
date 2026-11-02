@@ -4,7 +4,7 @@
 
 **A wrapper for integrations over a Jest-compatible test framework.**
 
-The same API across every Ghostry library. The framework is a parameter, never an import — this package has zero runtime dependencies.
+The same API on every runner — bun, vitest, jest, mocha, or `node:test` — with integrations that hook into each test, and features of its own, such as `attest` (assertions that also narrow TypeScript types). You hand it your runner's module, so it imports no runner itself and has zero runtime dependencies.
 
 [![npm](https://img.shields.io/badge/npm-ffffff.svg?style=for-the-badge&color=000000&logo=npm&logoColor=CB3837)](https://www.npmjs.com/package/@ghostry/harness)
 [![jsr](https://img.shields.io/badge/jsr-ffffff?style=for-the-badge&color=000000&logo=jsr&logoColor=F7DF1E)](https://jsr.io/@ghostry/harness)
