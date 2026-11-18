@@ -14,13 +14,13 @@
  * @module
  */
 
-import { initialize } from "../Core";
-import { HarnessError } from "../Error";
-import type { Framework } from "../Framework/Types";
-import { invokeNative, readNativeFn } from "../Surface/Core";
-import type { Identity, Integration } from "../Types";
-import { bound } from "../Utility";
-import type { AnyFn } from "../Utility/Types";
+import { initialize } from "../Core.ts";
+import { HarnessError } from "../Error.ts";
+import type { Framework } from "../Framework/Types.ts";
+import { invokeNative, readNativeFn } from "../Surface/Core.ts";
+import type { Identity, Integration } from "../Types.ts";
+import { bound } from "../Utility/index.ts";
+import type { AnyFn } from "../Utility/Types.ts";
 
 /** The describe every conformance test registers under. */
 const ROOT = "@ghostry/harness conformance";

@@ -6,8 +6,8 @@ import {
   type RemapOptions,
 } from "@ghostry/harness";
 import { expect, test } from "bun:test";
-import { attest } from "./fixtures/attest";
-import { invoke, recordingFramework, testAt } from "./fixtures/framework";
+import { attest } from "./fixtures/attest.ts";
+import { invoke, recordingFramework, testAt } from "./fixtures/framework.ts";
 
 type ExternContext = { extern: { mock: string }; spare: number };
 

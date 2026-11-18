@@ -1,4 +1,4 @@
-import type { AnyFn } from "./Types";
+import type { AnyFn } from "./Types.ts";
 
 /**
  * Whether a value is thenable — the structural test, not `instanceof Promise`,

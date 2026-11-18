@@ -1,6 +1,6 @@
-import type { Framework } from "../Framework/Types";
-import type { AnyFn } from "../Utility/Types";
-import type { Decorator, Suite } from "./Types";
+import type { Framework } from "../Framework/Types.ts";
+import type { AnyFn } from "../Utility/Types.ts";
+import type { Decorator, Suite } from "./Types.ts";
 
 /** Walk the parent links outward, then reverse: outer → inner. */
 export function pathOf(suite: Suite | undefined): string[] {

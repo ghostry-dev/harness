@@ -7,8 +7,8 @@
  * @module
  */
 
-import type { Framework } from "../Framework/Types";
-import type { AnyConstructor, InstanceOf } from "../Utility/Types";
+import type { Framework } from "../Framework/Types.ts";
+import type { AnyConstructor, InstanceOf } from "../Utility/Types.ts";
 
 /**
  * A registration-time suite node. `parent` is captured when the wrapped

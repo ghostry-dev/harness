@@ -8,7 +8,7 @@ import {
 import * as bun from "bun:test";
 import { expect, spyOn, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { attest } from "./fixtures/attest";
+import { attest } from "./fixtures/attest.ts";
 import {
   chainingFramework,
   invoke,
@@ -16,7 +16,7 @@ import {
   recordingFrameworkWithoutSuiteHooks,
   testAt,
   testsOf,
-} from "./fixtures/framework";
+} from "./fixtures/framework.ts";
 
 /**
  * `Outcome` is internal to the library now that a frame reports failure by

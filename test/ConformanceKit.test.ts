@@ -7,7 +7,7 @@ import {
   type Collection,
   type RecordedCall,
   type RecordingFramework,
-} from "./fixtures/framework";
+} from "./fixtures/framework.ts";
 
 /**
  * Drive the stand-in's recordings as a runner would: every `beforeAll`, then

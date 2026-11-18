@@ -1,13 +1,17 @@
-import { attestations } from "./Attest";
-import { ROW_KEY } from "./Each";
-import { HarnessError } from "./Error";
-import type { Framework } from "./Framework/Types";
-import { describe } from "./Surface/describe";
-import { hookMembers, type HookRegistry } from "./Surface/hooks";
-import { test } from "./Surface/test";
-import type { Cursor, Suite } from "./Surface/Types";
-import type { AnyIntegration, Initialized, InitializeOptions } from "./Types";
-import { boundWithMembers, isPollutionKey } from "./Utility";
+import { attestations } from "./Attest.ts";
+import { ROW_KEY } from "./Each.ts";
+import { HarnessError } from "./Error.ts";
+import type { Framework } from "./Framework/Types.ts";
+import { describe } from "./Surface/describe.ts";
+import { hookMembers, type HookRegistry } from "./Surface/hooks.ts";
+import { test } from "./Surface/test.ts";
+import type { Cursor, Suite } from "./Surface/Types.ts";
+import type {
+  AnyIntegration,
+  Initialized,
+  InitializeOptions,
+} from "./Types.ts";
+import { boundWithMembers, isPollutionKey } from "./Utility/index.ts";
 
 /**
  * `initialize({ integrations })` rejects a key collision, any pollution key

@@ -1,6 +1,6 @@
-import { ROW_KEY, type EachRow } from "./Each";
-import { HarnessError } from "./Error";
-import type { HookBody } from "./Surface/Types";
+import { ROW_KEY, type EachRow } from "./Each.ts";
+import { HarnessError } from "./Error.ts";
+import type { HookBody } from "./Surface/Types.ts";
 import type {
   AnyIntegration,
   Cleanup,
@@ -8,8 +8,8 @@ import type {
   Identity,
   Outcome,
   Wrapper,
-} from "./Types";
-import { assignOwn, isThenable } from "./Utility";
+} from "./Types.ts";
+import { assignOwn, isThenable } from "./Utility/index.ts";
 
 /**
  * Everything about one wrapped invocation that did not come from an

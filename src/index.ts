@@ -22,7 +22,7 @@
  * `framework` is the unchanged module. `attest` holds assertions that narrow,
  * built over that same `expect`.
  */
-export { initialize } from "./Core";
+export { initialize } from "./Core.ts";
 
 /**
  * `HarnessError` is the base; `IntegrationKeyCollisionError` is two
@@ -33,7 +33,7 @@ export { initialize } from "./Core";
  * conformance kit found the runner does not keep; `AttestationError` is an
  * `attest` check the runner's own `expect` did not already fail.
  */
-export { HarnessError } from "./Error";
+export { HarnessError } from "./Error.ts";
 
 /**
  * Wrap one integration and rewrite the keys it contributes — rename one, lift a
@@ -43,7 +43,7 @@ export { HarnessError } from "./Error";
  * that both contribute the same key can be used together, since `initialize`
  * rejects that collision and nothing downstream of it can un-reject one.
  */
-export { remap } from "./Remap";
+export { remap } from "./Remap.ts";
 
 /**
  * The integration contract, and the two types that join it to the framework
@@ -77,7 +77,7 @@ export type {
   Remapping,
   TestContext,
   Wrapper,
-} from "./Types";
+} from "./Types.ts";
 
 /**
  * The framework side. `Framework`, from its own module, is the structural bound
@@ -111,7 +111,7 @@ export type {
  * returns and every `SuiteScope` carries — and `HookBody` is what each of them
  * takes.
  */
-export type { Framework } from "./Framework/Types";
+export type { Framework } from "./Framework/Types.ts";
 
 export type {
   Attest,
@@ -132,6 +132,6 @@ export type {
   TestFn,
   TestHookFn,
   TestSurface,
-} from "./Surface/Types";
+} from "./Surface/Types.ts";
 
-export type { AnyFn } from "./Utility/Types";
+export type { AnyFn } from "./Utility/Types.ts";

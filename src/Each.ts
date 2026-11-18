@@ -1,5 +1,5 @@
-import { HarnessError } from "./Error";
-import { assignOwn, isPollutionKey } from "./Utility";
+import { HarnessError } from "./Error.ts";
+import { assignOwn, isPollutionKey } from "./Utility/index.ts";
 
 /**
  * The one context key this library writes itself: `enterFrame` assigns the

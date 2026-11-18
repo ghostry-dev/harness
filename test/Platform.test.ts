@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { attest } from "./fixtures/attest";
+import { attest } from "./fixtures/attest.ts";
 
 const DIST = new URL("../dist/esm/", import.meta.url).pathname;
 

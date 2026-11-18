@@ -11,7 +11,7 @@ import {
 import {
   recordingFramework,
   recordingFrameworkWithoutSuiteHooks,
-} from "./fixtures/framework";
+} from "./fixtures/framework.ts";
 
 /**
  * Compile-time assertions — see fabricator's `Fabrication.types.test.ts` for

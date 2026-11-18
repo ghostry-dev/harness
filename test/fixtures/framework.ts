@@ -1,5 +1,5 @@
 import type { AnyFn } from "@ghostry/harness";
-import { attest } from "./attest";
+import { attest } from "./attest.ts";
 
 /**
  * A recorded `describe` or `it` call. `fn` is the function the wrapper handed

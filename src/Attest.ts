@@ -1,7 +1,7 @@
-import { HarnessError } from "./Error";
-import type { Attest } from "./Surface/Types";
-import { isThenable } from "./Utility";
-import type { AnyConstructor, AnyFn } from "./Utility/Types";
+import { HarnessError } from "./Error.ts";
+import type { Attest } from "./Surface/Types.ts";
+import { isThenable } from "./Utility/index.ts";
+import type { AnyConstructor, AnyFn } from "./Utility/Types.ts";
 
 /** Returned by {@link delegate} when the runner has no such matcher. */
 const MISSING: unique symbol = Symbol("missing matcher");

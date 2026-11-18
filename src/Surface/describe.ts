@@ -1,10 +1,10 @@
-import { interpolateTitle, ROW_KEY, rowsFrom, type EachRow } from "../Each";
-import { HarnessError } from "../Error";
-import type { AnyFramework, Framework } from "../Framework/Types";
-import { assignOwn, bound, isThenable } from "../Utility";
-import type { AnyFn } from "../Utility/Types";
-import { invokeNative, redecorate } from "./Core";
-import type { Cursor, DescribeSurface, Suite } from "./Types";
+import { interpolateTitle, ROW_KEY, rowsFrom, type EachRow } from "../Each.ts";
+import { HarnessError } from "../Error.ts";
+import type { AnyFramework, Framework } from "../Framework/Types.ts";
+import { assignOwn, bound, isThenable } from "../Utility/index.ts";
+import type { AnyFn } from "../Utility/Types.ts";
+import { invokeNative, redecorate } from "./Core.ts";
+import type { Cursor, DescribeSurface, Suite } from "./Types.ts";
 
 /**
  * A describe callback in its two real forms. Declaring a parameter is the opt

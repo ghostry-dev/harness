@@ -5,7 +5,7 @@ import {
   type Provider,
   type RemapArgs,
 } from "@ghostry/harness";
-import { recordingFramework } from "./fixtures/framework";
+import { recordingFramework } from "./fixtures/framework.ts";
 
 /**
  * Compile-time assertions — see `Initialize.types.test.ts` for why

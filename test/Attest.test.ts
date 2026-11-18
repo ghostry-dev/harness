@@ -1,7 +1,7 @@
 import { HarnessError, initialize, type Attest } from "@ghostry/harness";
 import * as bun from "bun:test";
 import { expect, test } from "bun:test";
-import { recordingFramework } from "./fixtures/framework";
+import { recordingFramework } from "./fixtures/framework.ts";
 
 /**
  * How a stand-in `expect` behaves on a failed check: `"throwing"` is every real

@@ -4,8 +4,8 @@ import type {
   Provides,
   RemapArgs,
   RemapOptions,
-} from "./Types";
-import { assignOwn } from "./Utility";
+} from "./Types.ts";
+import { assignOwn } from "./Utility/index.ts";
 
 type AnyProvider<$Established> = (args: ProviderArgs<$Established>) => unknown;
 

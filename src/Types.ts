@@ -1,11 +1,11 @@
-import type { Framework } from "./Framework/Types";
+import type { Framework } from "./Framework/Types.ts";
 import type {
   Attest,
   DescribeSurface,
   HookSurface,
   TestSurface,
-} from "./Surface/Types";
-import type { UnionToIntersection } from "./Utility/Types";
+} from "./Surface/Types.ts";
+import type { UnionToIntersection } from "./Utility/Types.ts";
 
 /**
  * What identifies one registered test or suite — the material an integration

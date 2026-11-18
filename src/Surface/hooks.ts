@@ -1,11 +1,11 @@
-import { enterFrame, emptyInvocation } from "../Frame";
-import { HarnessError } from "../Error";
-import type { Framework } from "../Framework/Types";
-import type { AnyIntegration, Identity } from "../Types";
-import { bound } from "../Utility";
-import type { AnyFn } from "../Utility/Types";
-import { pathOf, readNativeFn } from "./Core";
-import type { Cursor, HookBody, Suite } from "./Types";
+import { enterFrame, emptyInvocation } from "../Frame.ts";
+import { HarnessError } from "../Error.ts";
+import type { Framework } from "../Framework/Types.ts";
+import type { AnyIntegration, Identity } from "../Types.ts";
+import { bound } from "../Utility/index.ts";
+import type { AnyFn } from "../Utility/Types.ts";
+import { pathOf, readNativeFn } from "./Core.ts";
+import type { Cursor, HookBody, Suite } from "./Types.ts";
 
 /**
  * A before-list and an after-list, each outer → inner within whatever it

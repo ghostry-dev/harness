@@ -6,7 +6,7 @@
  * @module
  */
 
-import type { AnyFn } from "../Utility/Types";
+import type { AnyFn } from "../Utility/Types.ts";
 
 /**
  * A source that declares every forwarded modifier at every depth. The wrapper

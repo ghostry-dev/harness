@@ -1,13 +1,13 @@
-import { enterFrame } from "../Frame";
-import { interpolateTitle, rowsFrom, type EachRow } from "../Each";
-import { HarnessError } from "../Error";
-import type { AnySource, Framework } from "../Framework/Types";
-import type { AnyIntegration, Identity } from "../Types";
-import { bound } from "../Utility";
-import type { AnyFn } from "../Utility/Types";
-import { invokeNative, pathOf, redecorate } from "./Core";
-import { hooksFor, type HookRegistry } from "./hooks";
-import type { Cursor, TestSurface } from "./Types";
+import { enterFrame } from "../Frame.ts";
+import { interpolateTitle, rowsFrom, type EachRow } from "../Each.ts";
+import { HarnessError } from "../Error.ts";
+import type { AnySource, Framework } from "../Framework/Types.ts";
+import type { AnyIntegration, Identity } from "../Types.ts";
+import { bound } from "../Utility/index.ts";
+import type { AnyFn } from "../Utility/Types.ts";
+import { invokeNative, pathOf, redecorate } from "./Core.ts";
+import { hooksFor, type HookRegistry } from "./hooks.ts";
+import type { Cursor, TestSurface } from "./Types.ts";
 
 type TestRegistrar = (
   name: string,
