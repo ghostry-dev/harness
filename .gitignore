@@ -1,3 +1,6 @@
+# >>> @ghostry:shared
+# Managed by the @ghostry meta repo (.templates/blocks/gitignore.library); edit
+# it there.
 # Based on https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore
 
 # Logs
@@ -178,3 +181,4 @@ dist
 /*.md
 !/AGENTS.md
 !/README.md
+# <<< @ghostry:shared

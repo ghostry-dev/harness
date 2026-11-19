@@ -1,24 +1,26 @@
+# Managed by the @ghostry meta repo (.templates/workflows/generate.ts). Edit it
+# there and run `bun .scripts/sync.ts`; changes made here are overwritten.
 name: Build and Test
 
 on:
   pull_request:
     branches: ["*"]
-  workflow_call:
-    outputs:
-      build-run-id:
-        value: ${{ jobs.build.outputs.run-id }}
 
 jobs:
-  build:
-    name: Build
+  build-harness:
+    name: Build `harness`
     uses: ./.github/workflows/build.yml
+    with:
+      package: harness
+      path: .
 
-  test:
-    name: Test
+  test-harness:
+    name: Test `harness`
     uses: ./.github/workflows/test.yml
-    needs:
-      - build
+    needs: [build-harness]
     permissions:
       actions: read
     with:
-      build-run-id: ${{ needs.build.outputs.run-id }}
+      package: harness
+      path: .
+      build-run-id: ${{ needs.build-harness.outputs.run-id }}

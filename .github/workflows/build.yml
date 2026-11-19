@@ -1,7 +1,21 @@
+# Managed by the @ghostry meta repo (.templates/workflows/generate.ts). Edit it
+# there and run `bun .scripts/sync.ts`; changes made here are overwritten.
 name: Build
 
 on:
   workflow_call:
+    inputs:
+      package:
+        required: true
+        type: string
+        description: >-
+          The package's id: the repo name for a single-package repo, or its
+          directory name under `pkg/`. One job per package, so a package that
+          fails blocks only its own dependents and its own release.
+      path:
+        required: true
+        type: string
+        description: The package directory relative to the repo root (`.` or `pkg/<id>`).
     outputs:
       run-id:
         value: ${{ github.run_id }}
@@ -9,7 +23,7 @@ on:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -23,11 +37,11 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build
-        run: bun run build
+        run: bun --cwd=${{ inputs.path }} run build
 
-      - name: Upload build
+      - name: Upload
         uses: actions/upload-artifact@v7
         with:
-          name: dist
-          path: dist
+          name: pkg-${{ inputs.package }}
+          path: ${{ inputs.path }}/dist
           if-no-files-found: error

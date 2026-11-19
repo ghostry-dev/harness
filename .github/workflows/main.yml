@@ -1,6 +1,12 @@
+# Managed by the @ghostry meta repo (.templates/workflows/generate.ts). Edit it
+# there and run `bun .scripts/sync.ts`; changes made here are overwritten.
 ##
-# Changing the version in a commit to main publishes the package under that
-# version.
+# Changing a package's version in a commit to main publishes it under that
+# version. The GitHub release is created with an empty body; notes are written
+# afterwards with the meta repo's release-notes skill.
+#
+# This file's name matters: each package's npm trusted publisher names
+# `main.yml`, since npm checks the calling workflow, not `publish.yml`.
 #
 name: Build, Test, and Release
 
@@ -10,78 +16,71 @@ on:
       - main
 
 jobs:
-  build:
-    name: Build
+  build-harness:
+    name: Build `harness`
     uses: ./.github/workflows/build.yml
+    with:
+      package: harness
+      path: .
 
-  test:
-    name: Test
+  test-harness:
+    name: Test `harness`
     uses: ./.github/workflows/test.yml
-    needs: [build]
+    needs: [build-harness]
     permissions:
       actions: read
     with:
-      build-run-id: ${{ needs.build.outputs.run-id }}
+      package: harness
+      path: .
+      build-run-id: ${{ needs.build-harness.outputs.run-id }}
 
-  get-version:
-    name: Get current version
-    runs-on: ubuntu-latest
+  version-harness:
+    name: Check for a release (`harness`)
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
     outputs:
-      version: ${{ steps.read-version.outputs.version }}
+      version: ${{ steps.read.outputs.version }}
+      tag: ${{ steps.read.outputs.tag }}
+      exists: ${{ steps.read.outputs.exists }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .bun-version
+      - name: Read the version and look for its release
+        id: read
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="v$(jq -r .version ./package.json)"
+          tag="$version"
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            exists=true
+          else
+            exists=false
+          fi
+          echo "Release $tag already exists? $exists"
+          echo "exists=$exists" >> $GITHUB_OUTPUT
 
-      - name: Install Dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Read package version
-        id: read-version
-        run: echo "version=v$(bunx --no-install npm view ./ version)" >> $GITHUB_OUTPUT
-
-  check-release:
-    name: Check for existing release
-    needs: [get-version]
-    runs-on: ubuntu-latest
-    outputs:
-      exists: ${{ steps.release-exists.outputs.result }}
-    steps:
-      - name: Find existing release if it exists
-        id: release-exists
-        uses: actions/github-script@v9
-        with:
-          result-encoding: string
-          script: |
-            return github.rest.repos.getReleaseByTag({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: '${{ needs.get-version.outputs.version }}',
-            }).then(() => 'true').catch(() => 'false');
-
-      - name: Release `${{ needs.get-version.outputs.version }}` already exists?
-        run: echo "${{ steps.release-exists.outputs.result }}"
-
-  publish:
-    name: Publish
-    if: ${{ needs.check-release.outputs.exists == 'false' }}
+  publish-harness:
+    name: Publish (`harness`)
+    if: ${{ needs.version-harness.outputs.exists == 'false' }}
     uses: ./.github/workflows/publish.yml
     needs:
-      - build
-      - test
-      - get-version
-      - check-release
+      - build-harness
+      - test-harness
+      - version-harness
     permissions:
       actions: read
       attestations: write
       contents: write
       id-token: write
     with:
-      version: ${{ needs.get-version.outputs.version }}
-      build-run-id: ${{ needs.build.outputs.run-id }}
-    secrets:
-      NPM_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
+      package: harness
+      path: .
+      version: ${{ needs.version-harness.outputs.version }}
+      tag: ${{ needs.version-harness.outputs.tag }}
+      release-name: ${{ needs.version-harness.outputs.version }}
+      build-run-id: ${{ needs.build-harness.outputs.run-id }}

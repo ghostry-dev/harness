@@ -1,16 +1,32 @@
+# Managed by the @ghostry meta repo (.templates/workflows/publish.yml). Edit it
+# there and run `bun .scripts/sync.ts`; changes made here are overwritten.
 name: Publish
 
 on:
   workflow_call:
-    secrets:
-      NPM_AUTH_TOKEN:
-        required: true
-        description: The NPM authentication token to publish the package.
     inputs:
+      package:
+        required: true
+        type: string
+        description: >-
+          The package's id: the repo name for a single-package repo, or its
+          directory name under `pkg/`. Artifact and tarball names derive from it.
+      path:
+        required: true
+        type: string
+        description: The package directory relative to the repo root (`.` or `pkg/<id>`).
       version:
         required: true
         type: string
-        description: The version of the package to publish.
+        description: The version of the package to publish, with its `v` prefix.
+      tag:
+        required: true
+        type: string
+        description: The release tag, `vX.Y.Z` or `<id>/vX.Y.Z`.
+      release-name:
+        required: true
+        type: string
+        description: The GitHub release's title.
       build-run-id:
         required: true
         type: string
@@ -18,7 +34,7 @@ on:
 
 env:
   is-prerelease: ${{ contains(inputs.version, '-') }}
-  filename: harness-${{ inputs.version }}.tgz
+  pkg-dir: ${{ inputs.path }}
 
 jobs:
   pack:
@@ -28,7 +44,9 @@ jobs:
       attestations: write
       contents: read
       id-token: write
-    runs-on: ubuntu-latest
+    env:
+      filename: ${{ inputs.package }}-${{ inputs.version }}.tgz
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -44,8 +62,8 @@ jobs:
       - name: Download the build
         uses: actions/download-artifact@v8
         with:
-          name: dist
-          path: dist
+          name: pkg-${{ inputs.package }}
+          path: ${{ env.pkg-dir }}/dist
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ inputs.build-run-id }}
           repository: ${{ github.repository }}
@@ -53,10 +71,11 @@ jobs:
       - name: Construct tarball path
         id: tarball-path
         run: >
-          echo "path=${{ github.workspace }}/${{ env.filename }}"
+          echo "path=${{ github.workspace }}/${{ env.pkg-dir }}/${{ env.filename }}"
           >> $GITHUB_OUTPUT
 
       - name: Pack
+        working-directory: ${{ env.pkg-dir }}
         run: bun pm pack --filename ${{ steps.tarball-path.outputs.path }}
 
       - name: Upload
@@ -71,33 +90,6 @@ jobs:
         with:
           subject-path: ${{ steps.tarball-path.outputs.path }}
 
-  release-github:
-    name: Create release on GitHub
-    needs: [pack]
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Download
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ env.filename }}
-          path: ${{ github.workspace }}/dist
-          merge-multiple: true
-
-      - name: Create release
-        uses: softprops/action-gh-release@v3
-        with:
-          name: ${{ inputs.version }}
-          tag_name: ${{ inputs.version }}
-          target_commitish: ${{ github.ref }}
-          prerelease: ${{ env.is-prerelease }}
-          fail_on_unmatched_files: true
-          files: ${{ github.workspace }}/dist/*.tgz
-
   ##
   # https://docs.npmjs.com/generating-provenance-statements#example-github-actions-workflow
   # https://docs.npmjs.com/trusted-publishers#step-2-configure-your-cicd-workflow
@@ -108,7 +100,9 @@ jobs:
       contents: read
       id-token: write
     needs: [pack]
-    runs-on: ubuntu-latest
+    env:
+      filename: ${{ inputs.package }}-${{ inputs.version }}.tgz
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -138,33 +132,78 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+
       ##
-      # `NODE_AUTH_TOKEN` is the bootstrap path, not the steady state. A
-      # trusted publisher cannot be configured for a package that does not
-      # exist yet, so a package's very first version has to authenticate
-      # with a token. Provenance is unaffected — it comes from the
-      # `id-token: write` permission above, not from how npm authenticates.
+      # npm refuses to publish over an existing version, so a re-run after
+      # this job published and a later job failed would fail here forever.
+      # Skipping a version npm already has makes the job safe to repeat.
       #
-      # Once this package has published once and has its trusted publisher
-      # configured, delete this `env:` block and the `NPM_AUTH_TOKEN` secret;
-      # the `.npmrc` that `setup-node` wrote will simply hold an empty token
-      # and npm falls back to OIDC.
+      - name: Check whether the version is already published
+        id: published
+        env:
+          version: ${{ inputs.version }}
+        run: |
+          name="$(jq -r .name ${{ env.pkg-dir }}/package.json)"
+          if bunx --no-install npm view "$name@${version#v}" version > /dev/null 2>&1; then
+            echo "$name@${version#v} is already on npm; skipping publish"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      ##
+      # npm authenticates through trusted publishing (OIDC) alone; there is
+      # no token. Provenance comes from the `id-token: write` permission
+      # above, which `main.yml` must also grant — npm requires it on both
+      # the calling and the called workflow.
+      #
+      # A trusted publisher can only be configured for a package that
+      # already exists, so a new package is claimed by hand
+      # first: publish a README-only stub at `0.0.0` from a maintainer's
+      # machine (`npm publish --access public`, 2FA), then add a trusted
+      # publisher on npmjs.com naming `main.yml` — npm validates a reusable
+      # workflow against its caller, not this file — with direct publishing
+      # enabled, since a new configuration only allows `npm stage publish`
+      # by default. CI then publishes every real version with provenance;
+      # deprecate the stub once the first one is live. Until that is done,
+      # this step fails for that package.
       #
       - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
+        if: ${{ steps.published.outputs.exists == 'false' }}
         run: >
           bunx --no-install npm publish
           ${{ github.workspace }}/dist/${{ env.filename }}
           --tag ${{ env.is-prerelease == 'true' && 'experimental' || 'latest' }}
           --provenance
 
+      ##
+      # npm's registry is eventually consistent: a version can be missing from
+      # `npm view` for a while after `npm publish` returns. `main.yml` starts
+      # the packages that depend on this one once this workflow finishes, and
+      # JSR resolves their peer range against npm, so this job ends only once
+      # the version can actually be fetched.
+      #
+      - name: Wait for the version to be visible
+        env:
+          version: ${{ inputs.version }}
+        run: |
+          name="$(jq -r .name ${{ env.pkg-dir }}/package.json)"
+          for attempt in $(seq 1 60); do
+            if bunx --no-install npm view "$name@${version#v}" version > /dev/null 2>&1; then
+              echo "$name@${version#v} is visible on npm"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "$name@${version#v} is still not visible on npm after 10 minutes"
+          exit 1
+
   publish-jsr:
     name: Publish to JSR
     permissions:
       contents: read
       id-token: write
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -178,4 +217,41 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Publish
+        working-directory: ${{ env.pkg-dir }}
         run: bunx --no-install jsr publish
+
+  ##
+  # The release is created last, after both registries have the version,
+  # because `main.yml` treats an existing release as "already published" and
+  # skips the package. Created any earlier, a release left behind by a failed
+  # publish would make every later run skip that version instead of finishing
+  # it. Both publishes are safe to repeat — `publish-npm` skips a version npm
+  # already has, and `jsr publish` skips one JSR already has — so a re-run
+  # completes whatever the failed run left undone.
+  #
+  release-github:
+    name: Create release on GitHub
+    needs: [pack, publish-npm, publish-jsr]
+    permissions:
+      contents: write
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.package }}-${{ inputs.version }}.tgz
+          path: ${{ github.workspace }}/dist
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ inputs.release-name }}
+          tag_name: ${{ inputs.tag }}
+          target_commitish: ${{ github.ref }}
+          prerelease: ${{ env.is-prerelease }}
+          fail_on_unmatched_files: true
+          files: ${{ github.workspace }}/dist/*.tgz
